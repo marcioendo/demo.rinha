@@ -28,15 +28,7 @@ import java.nio.channels.SocketChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
-import java.util.concurrent.Callable;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.ScheduledFuture;
-import java.util.concurrent.StructuredTaskScope;
-import java.util.concurrent.StructuredTaskScope.Subtask;
 import java.util.concurrent.ThreadFactory;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
@@ -45,24 +37,12 @@ import java.util.function.Consumer;
 /// An instance of our server.
 public final class Back extends Shared {
 
-  private static final long HEALTH_PERIOD = 5_000;
-
   private static final int MAX_PERMITS = 50;
 
   private static final int MAX_TRXS = 17_000;
 
   /// Testing Adapter
   static class Adapter {
-
-    private volatile int proc;
-
-    int proc() {
-      return proc;
-    }
-
-    void proc(int value) {
-      proc = value;
-    }
 
     SocketAddress proc0() throws IOException {
       return addr("payment-processor-default", 8080);
@@ -125,8 +105,6 @@ public final class Back extends Shared {
 
   private final ServerSocketChannel channel;
 
-  private final ScheduledFuture<?> healthFuture;
-
   private final Lock lock = new ReentrantLock();
 
   private final SocketAddress proc0;
@@ -151,15 +129,12 @@ public final class Back extends Shared {
   private Back(
       Adapter adapter,
       ServerSocketChannel channel,
-      ScheduledFuture<?> healthFuture,
       SocketAddress proc0,
       SocketAddress proc1,
       ThreadFactory taskFactory) {
     this.adapter = adapter;
 
     this.channel = channel;
-
-    this.healthFuture = healthFuture;
 
     this.proc0 = proc0;
 
@@ -268,26 +243,10 @@ public final class Back extends Shared {
     taskFactory = Thread.ofVirtual().name("task-", 1).factory();
 
     //
-    // Health checks
-    //
-
-    final ScheduledExecutorService healthService;
-    healthService = Executors.newSingleThreadScheduledExecutor(taskFactory);
-
-    shutdownHook.accept(healthService);
-
-    final HealthCheck healthCheck;
-    healthCheck = new HealthCheck(adapter, proc0, proc1, taskFactory);
-
-    // testing handle
-    final ScheduledFuture<?> healthFuture;
-    healthFuture = healthService.scheduleWithFixedDelay(healthCheck, 0, HEALTH_PERIOD, TimeUnit.MILLISECONDS);
-
-    //
     // Back
     //
 
-    return new Back(adapter, channel, healthFuture, proc0, proc1, taskFactory);
+    return new Back(adapter, channel, proc0, proc1, taskFactory);
   }
 
   // ##################################################################
@@ -808,256 +767,6 @@ public final class Back extends Shared {
   // ##################################################################
 
   // ##################################################################
-  // # BEGIN: Health
-  // ##################################################################
-
-  private static final int HEALTH_MIN_BODY_OFFSET = 138;
-
-  private record Health(boolean failing, int minResponseTime) {
-
-    static final Health ERROR = new Health(true, Integer.MAX_VALUE);
-
-    final int compute(Health fallback) {
-      final int fail;
-      fail = Boolean.compare(failing, fallback.failing);
-
-      if (fail == 0) {
-        final int time;
-        time = Integer.compare(minResponseTime, fallback.minResponseTime);
-
-        return time > 0 ? 1 : 0;
-      }
-
-      else if (fail < 0) {
-        return 0;
-      }
-
-      else {
-        return 1;
-      }
-    }
-
-  }
-
-  private static final class HealthCheck implements Runnable {
-
-    private final Adapter adapter;
-
-    private final SocketAddress proc0;
-
-    private final SocketAddress proc1;
-
-    private final ThreadFactory taskFactory;
-
-    HealthCheck(Adapter adapter, SocketAddress proc0, SocketAddress proc1, ThreadFactory taskFactory) {
-      this.adapter = adapter;
-      this.proc0 = proc0;
-      this.proc1 = proc1;
-      this.taskFactory = taskFactory;
-    }
-
-    @Override
-    public final void run() {
-      final HealthTask health0;
-      health0 = new HealthTask(adapter, proc0);
-
-      final HealthTask health1;
-      health1 = new HealthTask(adapter, proc1);
-
-      int result = 0;
-
-      try (var scope = new StructuredTaskScope.ShutdownOnFailure("health", taskFactory)) {
-        final Subtask<Health> task0;
-        task0 = scope.fork(health0);
-
-        final Subtask<Health> task1;
-        task1 = scope.fork(health1);
-
-        scope.join();
-
-        scope.throwIfFailed();
-
-        final Health res0;
-        res0 = task0.get();
-
-        final Health res1;
-        res1 = task1.get();
-
-        result = res0.compute(res1);
-      } catch (ExecutionException e) {
-        log("Failed to execute health", e);
-      } catch (InterruptedException e) {
-        log("Interrupted while running health", e);
-      }
-
-      adapter.proc(result);
-    }
-
-  }
-
-  private static final byte[] HEALTH_REQ = asciiBytes("""
-  GET /payments/service-health HTTP/1.0\r
-  \r
-  """); // http 1.0 request so we don't need to parse a chunked response
-
-  private static final class HealthTask implements Callable<Health> {
-
-    private final Adapter adapter;
-
-    private final ByteBuffer buffer = ByteBuffer.allocate(BUFFER_SIZE);
-
-    private final SocketAddress proc;
-
-    HealthTask(Adapter adapter, SocketAddress proc) {
-      this.adapter = adapter;
-
-      this.proc = proc;
-    }
-
-    @Override
-    public final Health call() throws Exception {
-      final SocketChannel processor;
-      processor = adapter.socketChannelHealth();
-
-      if (processor == null) {
-        return Health.ERROR;
-      }
-
-      int bytesRead;
-      bytesRead = 0;
-
-      try (processor) {
-        // assemble request
-        buffer.put(HEALTH_REQ);
-
-        buffer.flip();
-
-        // send request
-        processor.connect(proc);
-
-        while (buffer.hasRemaining()) {
-          processor.write(buffer);
-        }
-
-        // read response
-        buffer.clear();
-
-        bytesRead = processor.read(buffer);
-      } catch (IOException e) {
-        log("Processor I/O error", e);
-      }
-
-      if (bytesRead <= 0) {
-        return Health.ERROR;
-      }
-
-      // parse response
-      buffer.flip();
-
-      int idx;
-      idx = HEALTH_MIN_BODY_OFFSET;
-
-      final int limit;
-      limit = buffer.limit();
-
-      while (idx < limit) {
-        final byte b;
-        b = buffer.get(idx++);
-
-        if (b == '{') {
-          break;
-        }
-      }
-
-      if (idx == limit) {
-        return null;
-      }
-
-      final boolean failing;
-
-      {
-        // skip "failing":
-        idx += 10;
-
-        final byte b;
-        b = buffer.get(idx);
-
-        idx += 22; // assume true
-
-        if (b == 't') {
-          failing = true;
-        } else if (b == 'f') {
-          failing = false;
-
-          idx += 1; // false is 1-byte longer
-        } else {
-          return null;
-        }
-      }
-
-      final int minResponseTime;
-
-      {
-        final byte colon;
-        colon = buffer.get(idx++);
-
-        if (colon != ':') {
-          return null;
-        }
-
-        final int first;
-        first = idx;
-
-        int val;
-        val = 0;
-
-        while (idx < limit) {
-          final byte b;
-          b = buffer.get(idx);
-
-          if (b == '}') {
-            if (idx > first) {
-              break;
-            } else {
-              return null;
-            }
-          }
-
-          idx += 1;
-
-          if (b < '0') {
-            return null;
-          }
-
-          if (b > '9') {
-            return null;
-          }
-
-          final int digit;
-          digit = b - '0';
-
-          val *= 10;
-
-          val += digit;
-        }
-
-        if (idx == limit) {
-          return null;
-        }
-
-        minResponseTime = val;
-      }
-
-      return new Health(failing, minResponseTime);
-    }
-
-  }
-
-  // ##################################################################
-  // # END: Health
-  // ##################################################################
-
-  // ##################################################################
   // # BEGIN: Trx
   // ##################################################################
 
@@ -1115,23 +824,6 @@ public final class Back extends Shared {
     }
 
     return "ERROR";
-  }
-
-  final void _health() {
-    try {
-      final long millis;
-      millis = healthFuture.getDelay(TimeUnit.MILLISECONDS);
-
-      Thread.sleep(millis + 100);
-    } catch (InterruptedException e) {
-      throw new RuntimeException(e);
-    }
-  }
-
-  int _health(boolean fail0, int time0, boolean fail1, int time1) {
-    final Health h0 = new Health(fail0, time0);
-    final Health h1 = new Health(fail1, time1);
-    return h0.compute(h1);
   }
 
   void _trx(long time, int proc, int amount) {
