@@ -16,7 +16,7 @@ To build and run the solution locally, you'll need:
 
 - GNU Make 4.4.1 (or later)
 - GraalVM 24+
-- Payment processors are running [guide](https://github.com/zanfranceschi/rinha-de-backend-2025/blob/main/rinha-test/MINIGUIA.md)
+- Payment processors are running ([guide](https://github.com/zanfranceschi/rinha-de-backend-2025/blob/main/rinha-test/MINIGUIA.md))
 
 Ensure the following environment variables are set:
 
