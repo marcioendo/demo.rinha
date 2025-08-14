@@ -445,7 +445,7 @@ $(COMPOSE): Makefile $(FDOCKER_MARKER) $(BDOCKER_MARKER)
 ## It should define:
 ## - GH_REPOS
 ## - GH_PACKAGE_TOKEN
--include $(HOME)/.config/objectos/gh-config.mk
+-include $(HOME)/.config/marcioendo/gh-config.mk
 
 ifndef GH_REPOS
 GH_REPOS := /tmp
@@ -525,5 +525,8 @@ $(GH_PACKAGE_MARKER): $(COMPOSE)
 #
 # rinha@gh-release
 #
+
+## GH_API
+GH_API = https://api.github.com/repos/marcioendo/$(ARTIFACT_ID)
 
 include make/gh-release.mk
