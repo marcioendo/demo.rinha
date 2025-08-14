@@ -435,3 +435,66 @@ compose-down:
 
 $(COMPOSE): Makefile $(FDOCKER_MARKER) $(BDOCKER_MARKER)
 	$(file > $(COMPOSE),$(COMPOSE_CONTENTS))
+
+#
+# GH related tasks
+#
+
+## It should define:
+## - GH_REPOS
+## - GH_PACKAGE_TOKEN
+-include $(HOME)/.config/objectos/gh-config.mk
+
+ifndef GH_REPOS
+GH_REPOS := /tmp
+endif
+
+#
+# rinha@gh-pr
+#
+
+## local upstream directory
+UP := $(GH_REPOS)/rinha-de-backend-2025
+
+## upstream repo
+UP_REPO := git@github.com:marcioendo/rinha-de-backend-2025.git
+
+## PR directory
+PR := $(UP)/participantes/marcioendo
+
+## PR docker-compose
+PR_COMPOSE := $(PR)/docker-compose.yml
+
+## PR info.json
+PR_INFO := $(PR)/info.json
+
+## PR README
+PR_README := $(PR)/README.md
+
+## PR marker
+PR_MARKER := $(WORK)/pr-marker
+
+.PHONY: gh-pr
+gh-pr: $(PR_MARKER)
+
+.PHONY: gh-pr-clean
+gh-pr-clean:
+	rm -f $(PR)/* $(PR_MARKER)
+
+$(PR_MARKER): $(PR_COMPOSE) $(PR_INFO) $(PR_README)
+	touch $@
+
+$(PR_COMPOSE): $(COMPOSE) | $(PR)
+	cp $< $@
+
+$(PR_INFO): info.json Makefile | $(PR)
+	sed -e 's/{{VERSION}}/$(VERSION)/' $< > $@
+
+$(PR_README): README-pr.md Makefile | $(PR)
+	sed -e 's/{{VERSION}}/$(VERSION)/' $< > $@
+
+$(PR): | $(UP)
+	mkdir --parents $@
+
+$(UP):
+	git clone --depth=2 $(UP_REPO) $(UP)
