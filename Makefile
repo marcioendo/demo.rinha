@@ -252,9 +252,9 @@ endif
 
 ## *-dockerfile contents
 define $(1)_CONTENTS :=
-LABEL org.opencontainers.image.source=https://github.com/marcioendo/demo.rinha
-
 FROM debian:bookworm-slim
+
+LABEL org.opencontainers.image.source=https://github.com/marcioendo/demo.rinha
 
 $$($(1)_COPY)
 
