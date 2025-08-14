@@ -1,0 +1,9 @@
+<!DOCTYPE suite SYSTEM "https://testng.org/testng-1.0.dtd">
+
+<suite name="Rinha de Backend" verbose="2">
+    <test name="All">
+        <packages>
+            <package name="demo.rinha"></package>
+        </packages>
+    </test>
+</suite>

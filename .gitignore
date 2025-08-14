@@ -1,0 +1,8 @@
+# Build
+/work/
+
+# Eclipse IDE
+/eclipse-bin/
+/.settings/
+/.classpath
+/.project
