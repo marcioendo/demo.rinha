@@ -21,7 +21,7 @@
 ## Coordinates
 GROUP_ID := br.dev.o7.marcio
 ARTIFACT_ID := demo.rinha
-VERSION := 001-SNAPSHOT
+VERSION := 001
 
 ## JDK 24 required
 JAVA_RELEASE := 24
@@ -252,6 +252,8 @@ endif
 
 ## *-dockerfile contents
 define $(1)_CONTENTS :=
+LABEL org.opencontainers.image.source=https://github.com/marcioendo/demo.rinha
+
 FROM debian:bookworm-slim
 
 $$($(1)_COPY)
@@ -498,3 +500,30 @@ $(PR): | $(UP)
 
 $(UP):
 	git clone --depth=2 $(UP_REPO) $(UP)
+	
+#
+# rinha@gh-package
+#
+
+## GH package marker
+GH_PACKAGE_MARKER := $(WORK)/gh-package-marker
+
+.PHONY: gh-package
+gh-package: $(GH_PACKAGE_MARKER)
+
+.PHONY: gh-package-clean
+gh-package-clean:
+	rm -f $(GH_PACKAGE_MARKER)
+
+$(GH_PACKAGE_MARKER): $(COMPOSE)
+	@echo $(GH_PACKAGE_TOKEN) | docker login ghcr.io -u marcioendo --password-stdin
+	docker push $(FDOCKER_TAG)
+	docker push $(BDOCKER_TAG)
+	docker logout
+	touch $@
+	
+#
+# rinha@gh-release
+#
+
+include make/gh-release.mk
