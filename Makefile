@@ -45,7 +45,7 @@ TESTNG := org.testng/testng/7.11.0
 #
 
 .PHONY: all
-all: compose
+all: test front-native back-native
 
 include make/java-core.mk
 
@@ -435,13 +435,3 @@ compose-down:
 
 $(COMPOSE): Makefile $(FDOCKER_MARKER) $(BDOCKER_MARKER)
 	$(file > $(COMPOSE),$(COMPOSE_CONTENTS))
-
-#
-# rinha@integration
-#
-
-.PHONY: integration
-integration: 
-	for i in {1..10}; do \
-	  printf "POST /payments HTTP/1.1\r\nHost: localhost:9999\r\nUser-Agent: Grafana k6/1.1.0\r\nContent-Length: 70\r\nContent-Type: application/json\r\n\r\n{\"correlationId\":\"$$(uuidgen)\",\"amount\":19.9}" | netcat localhost 9999 \
-	done \
