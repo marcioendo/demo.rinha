@@ -1,0 +1,39 @@
+name: Java CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up JDK
+      uses: actions/setup-java@v4
+      with:
+        java-version: '24.0.1+9'
+        distribution: 'temurin'
+
+    - name: Cache local repository
+      if: success() || failure()
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/objectos
+        key: ${{ runner.os }}-objectos-${{ hashFiles('Makefile', 'make/*.mk') }}
+        restore-keys: ${{ runner.os }}-objectos-
+
+    - name: Build it
+      run: make
+
+    - name: Archive test results
+      if: success() || failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ runner.os }}-test-results
+        path: work/test-output

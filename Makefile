@@ -45,7 +45,7 @@ TESTNG := org.testng/testng/7.11.0
 #
 
 .PHONY: all
-all: test front-native back-native
+all: test
 
 include make/java-core.mk
 
