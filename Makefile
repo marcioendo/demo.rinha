@@ -105,7 +105,7 @@ endif
 
 ## native-image common args
 NATIVE_IMAGEX := $(NATIVE_IMAGE)
-NATIVE_IMAGEX += -march=skylake
+NATIVE_IMAGEX += -march=x86-64-v3
 ifeq ($(ENABLE_PREVIEW),1)
 NATIVE_IMAGEX += --enable-preview
 endif
