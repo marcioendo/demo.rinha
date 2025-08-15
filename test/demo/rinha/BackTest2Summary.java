@@ -67,4 +67,44 @@ public class BackTest2Summary {
     assertEquals(front.isOpen(), false);
   }
 
+  @Test(description = "no query params")
+  public void testCase02() {
+    final SocketChannel front;
+    front = Y.socketChannel(opts -> {
+      opts.readData(
+          Y.frontMsgSummary(0L, Long.MAX_VALUE)
+      );
+    });
+
+    final ServerSocketChannel channel;
+    channel = Y.serverSocketChannel(opts -> {
+      opts.socketChannel(front);
+    });
+
+    final Back.Adapter adapter;
+    adapter = Y.backAdapter(opts -> {
+      opts.serverSocketChannel(channel);
+    });
+
+    final Back back;
+    back = Y.back(adapter);
+
+    back._trx(time0, 0, 1); // req0=1, amount0=1
+    back._trx(time0 + 200, 1, 10); // req1=1, amount1=10
+    back._trx(time0 + 400, 0, 100); // req0=2, amount0=101
+    back._trx(time1, 0, 1000); // req0=3, amount0=1101
+    back._trx(time1, 1, 10000); // req1=2, amount1=10010
+    back._trx(time1 + 1, 0, 100000);
+    back._trx(time1 + 1, 1, 1000000);
+
+    assertEquals(back._exec(), "Back[trxsIndex=7]");
+
+    assertEquals(
+        Y.socketChannelWrite(front),
+        Y.backMsgSummary(4, 101101, 3, 1010010)
+    );
+
+    assertEquals(front.isOpen(), false);
+  }
+
 }

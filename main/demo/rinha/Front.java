@@ -461,28 +461,30 @@ public final class Front extends Shared {
         }
       }
 
-      if (off == 0) {
-        log("Failed to find query params", buffer.rewind());
-
-        return resp500();
-      }
-
-      // parse first time
-
-      // skip '='
-      off += 1;
-
+      // from time
       final long time0;
-      time0 = summaryTime(off);
 
-      // skip iso time
-      off += 24;
-
-      // skip '&to='
-      off += 4;
-
+      // to time
       final long time1;
-      time1 = summaryTime(off);
+
+      if (off != 0) {
+        // skip '='
+        off += 1;
+
+        time0 = summaryTime(off);
+
+        // skip iso time
+        off += 24;
+
+        // skip '&to='
+        off += 4;
+
+        time1 = summaryTime(off);
+      } else {
+        time0 = 0L;
+
+        time1 = Long.MAX_VALUE;
+      }
 
       final ByteBuffer buffer0;
       buffer0 = buffer.clear();

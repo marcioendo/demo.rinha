@@ -100,4 +100,71 @@ public class FrontTest2Summary {
     assertEquals(client.isOpen(), false);
   }
 
+  @Test(description = "no query params")
+  public void testCase02() {
+    final SocketChannel client;
+    client = Y.socketChannel(opts -> {
+      opts.readData("""
+      GET /payments-summary HTTP/1.1\r
+      Host: localhost:9999\r
+      User-Agent: curl/8.5.0\r
+      Accept: */*\r
+      \r
+      """);
+    });
+
+    final SocketChannel back0;
+    back0 = Y.socketChannel(opts -> {
+      opts.readData(Y.backMsgSummary(0, 0, 0, 0));
+    });
+
+    final SocketChannel back1;
+    back1 = Y.socketChannel(opts -> {
+      opts.readData(Y.backMsgSummary(0, 0, 0, 0));
+    });
+
+    final ServerSocketChannel channel;
+    channel = Y.serverSocketChannel(opts -> {
+      opts.socketChannel(client);
+    });
+
+    final Front.Adapter adapter;
+    adapter = Y.frontAdapter(opts -> {
+      opts.serverSocketChannel(channel);
+
+      opts.socketChannel(back0);
+      opts.socketChannel(back1);
+    });
+
+    final Front front;
+    front = Y.front(adapter);
+
+    assertEquals(front._exec(), "Front[backRound=0]");
+
+    assertEquals(
+        Y.socketChannelWrite(back0),
+        Y.frontMsgSummary(0L, Long.MAX_VALUE)
+    );
+
+    assertEquals(
+        Y.socketChannelWrite(back1),
+        Y.frontMsgSummary(0L, Long.MAX_VALUE)
+    );
+
+    assertEquals(
+        Y.socketChannelWriteAscii(client),
+        """
+        HTTP/1.1 200 OK\r
+        Content-Type: application/json\r
+        Content-Length: 108\r
+        \r
+        {"default":{"totalRequests":0,"totalAmount":0.000000},"fallback":{"totalRequests":0,"totalAmount":0.000000}}\
+        """
+    );
+
+    assertEquals(back0.isOpen(), false);
+    assertEquals(back1.isOpen(), false);
+    assertEquals(client.isOpen(), false);
+  }
+
 }
