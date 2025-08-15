@@ -28,6 +28,7 @@ import java.nio.channels.SocketChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
+import java.util.Deque;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.Lock;
@@ -100,6 +101,8 @@ public final class Back extends Shared {
   }
 
   private final Adapter adapter;
+
+  private final Deque<ByteBuffer> bufferPool = bufferPool();
 
   private final ServerSocketChannel channel;
 
@@ -292,7 +295,15 @@ public final class Back extends Shared {
     }
 
     final ByteBuffer buffer;
-    buffer = ByteBuffer.allocate(BUFFER_SIZE);
+
+    lock.lock();
+    try {
+      buffer = bufferPool.removeFirst();
+    } finally {
+      lock.unlock();
+    }
+
+    buffer.clear();
 
     final Task task;
     task = new Task(buffer, front);
@@ -327,6 +338,23 @@ public final class Back extends Shared {
 
     @Override
     public final void run() {
+      try {
+        run0();
+      } finally {
+        lock.lock();
+        try {
+          bufferPool.addLast(buffer);
+        } finally {
+          lock.unlock();
+        }
+      }
+    }
+
+    private void run0() {
+      byte op = 0;
+
+      int paymentLimit = 0;
+
       try (front) {
         // read the request
         final int frontRead;
@@ -342,161 +370,245 @@ public final class Back extends Shared {
         buffer.flip();
 
         // task dispatch
-        final byte op;
         op = buffer.get();
 
-        final ByteBuffer resp;
-        resp = switch (op) {
-          case OP_PURGE -> purge();
+        switch (op) {
+          case OP_PURGE -> {
+            trxsIndex = 0;
 
-          case OP_PAYMENTS -> payment();
+            buffer.clear();
 
-          case OP_SUMMARY -> summary();
+            buffer.putInt(PURGE_200);
 
-          case OP_UNKNOWN -> unknown();
+            buffer.flip();
+          }
 
-          default -> unknown();
-        };
+          case OP_PAYMENTS -> {
+            paymentLimit = buffer.limit();
+
+            // send response straight away
+            final byte[] resp;
+            resp = RESP_200;
+
+            buffer.position(paymentLimit);
+
+            buffer.limit(paymentLimit + resp.length);
+
+            buffer.put(paymentLimit, resp);
+          }
+
+          case OP_SUMMARY -> {
+            int req0 = 0, req1 = 0, amount0 = 0, amount1 = 0;
+
+            final long time0;
+            time0 = buffer.getLong();
+
+            final long time1;
+            time1 = buffer.getLong();
+
+            lock.lock();
+            try {
+              final int max;
+              max = trxsIndex;
+
+              for (int idx = 0; idx < max; idx++) {
+                final Trx trx;
+                trx = trxs[idx];
+
+                if (trx.time < time0 || trx.time > time1) {
+                  continue;
+                }
+
+                if (trx.proc == 0) {
+                  req0 += 1;
+
+                  amount0 += trx.amount;
+                } else {
+                  req1 += 1;
+
+                  amount1 += trx.amount;
+                }
+              }
+            } finally {
+              lock.unlock();
+            }
+
+            buffer.clear();
+
+            buffer.putInt(req0);
+
+            buffer.putInt(amount0);
+
+            buffer.putInt(req1);
+
+            buffer.putInt(amount1);
+
+            buffer.flip();
+          }
+
+          default -> {
+            buffer.clear();
+
+            buffer.put(RESP_404);
+
+            buffer.flip();
+          }
+        }
 
         // write response
-        while (resp.hasRemaining()) {
-          front.write(resp);
+        while (buffer.hasRemaining()) {
+          front.write(buffer);
         }
       } catch (IOException e) {
         log("Front I/O error", e);
+
+        return;
+      }
+
+      if (op == OP_PAYMENTS) {
+        buffer.position(1); // skip op
+
+        buffer.limit(paymentLimit);
+
+        // process payment
+        paymentTask();
       }
     }
 
-    private ByteBuffer purge() {
-      trxsIndex = 0;
-
-      buffer.clear();
-
-      buffer.putInt(PURGE_200);
-
-      return buffer.flip();
-    }
-
-    private ByteBuffer payment() {
-      // handle actual payment in a new thread
-      final PaymentTask task;
-      task = new PaymentTask(buffer);
-
-      final Thread thread;
-      thread = taskFactory.newThread(task);
-
-      thread.start();
-
-      // send response straight away
-      return ByteBuffer.wrap(RESP_200);
-    }
-
-    private ByteBuffer summary() {
-      int req0 = 0, req1 = 0, amount0 = 0, amount1 = 0;
-
-      final long time0;
-      time0 = buffer.getLong();
-
-      final long time1;
-      time1 = buffer.getLong();
-
-      lock.lock();
-      try {
-        final int max;
-        max = trxsIndex;
-
-        for (int idx = 0; idx < max; idx++) {
-          final Trx trx;
-          trx = trxs[idx];
-
-          if (trx.time < time0 || trx.time > time1) {
-            continue;
-          }
-
-          if (trx.proc == 0) {
-            req0 += 1;
-
-            amount0 += trx.amount;
-          } else {
-            req1 += 1;
-
-            amount1 += trx.amount;
-          }
-        }
-      } finally {
-        lock.unlock();
-      }
-
-      buffer.clear();
-
-      buffer.putInt(req0);
-
-      buffer.putInt(amount0);
-
-      buffer.putInt(req1);
-
-      buffer.putInt(amount1);
-
-      return buffer.flip();
-    }
-
-    private ByteBuffer unknown() {
-      return ByteBuffer.wrap(RESP_404);
-    }
-
-  }
-
-  // ##################################################################
-  // # END: Task
-  // ##################################################################
-
-  // ##################################################################
-  // # BEGIN: Payment
-  // ##################################################################
-
-  // we'll use HTTP/1.0 so we can skip the Host header...
-  private static final byte[] PAYMENT_REQ = asciiBytes("""
+    // we'll use HTTP/1.0 so we can skip the Host header...
+    private static final byte[] PAYMENT_REQ = asciiBytes("""
     POST /payments HTTP/1.0\r
     Content-Type: application/json\r
     Content-Length: \
     """);
 
-  private static final int PAYMENT_REQ_TRAILER_LEN = "\"requestedAt\":\"2025-07-15T12:34:56.000Z\"}".length();
-  private static final byte[] REQUESTED_AT = asciiBytes(",\"requestedAt\":\"");
-  private static final byte[] CRLFCRLF = asciiBytes("\r\n\r\n");
+    private static final int PAYMENT_REQ_TRAILER_LEN = "\"requestedAt\":\"2025-07-15T12:34:56.000Z\"}".length();
+    private static final byte[] REQUESTED_AT = asciiBytes(",\"requestedAt\":\"");
+    private static final byte[] CRLFCRLF = asciiBytes("\r\n\r\n");
 
-  private static final long PAYMENT_RESP = asciiLong("HTTP/1.1");
-  private static final long PAYMENT_RESP_200 = asciiLong(" 200 OK\r");
-  private static final long PAYMENT_RESP_400 = asciiLong(" 400 Bad");
-  private static final long PAYMENT_RESP_500 = asciiLong(" 500 Int");
+    private static final long PAYMENT_RESP = asciiLong("HTTP/1.1");
+    private static final long PAYMENT_RESP_200 = asciiLong(" 200 OK\r");
+    private static final long PAYMENT_RESP_400 = asciiLong(" 400 Bad");
+    private static final long PAYMENT_RESP_500 = asciiLong(" 500 Int");
 
-  private class PaymentTask implements Runnable {
+    private void paymentTask() {
+      //
+      // trx time
+      //
 
-    private int amount;
+      final long time;
+      time = buffer.getLong();
 
-    private final ByteBuffer buffer;
+      //
+      // json
+      //
 
-    private int rubicon;
+      final int reqJsonLen;
+      reqJsonLen = buffer.remaining();
 
-    private long time;
+      final byte[] json;
+      json = new byte[reqJsonLen + PAYMENT_REQ_TRAILER_LEN];
 
-    PaymentTask(ByteBuffer buffer) {
-      this.buffer = buffer;
-    }
+      // json: copy from original request
+      int jsonIdx;
+      jsonIdx = buffer.remaining();
 
-    @Override
-    public final void run() {
-      prepare();
+      buffer.get(json, 0, jsonIdx);
+
+      // json: remove trailing '}'
+      jsonIdx -= 1;
+
+      // parse amount (is this really required??? or can we assume 19.9???)
+      final int amount;
+      amount = parseAmount(json, jsonIdx);
+
+      // json: requestedAt prop
+      System.arraycopy(REQUESTED_AT, 0, json, jsonIdx, REQUESTED_AT.length);
+
+      jsonIdx += REQUESTED_AT.length;
+
+      final Instant instant;
+      instant = Instant.ofEpochMilli(time);
+
+      final byte[] instantBytes;
+      instantBytes = asciiBytes(instant.toString());
+
+      System.arraycopy(instantBytes, 0, json, jsonIdx, instantBytes.length);
+
+      jsonIdx += instantBytes.length;
+
+      // json: trailer
+      json[jsonIdx++] = '\"';
+      json[jsonIdx++] = '}';
+
+      //
+      // Content-Length
+      //
+
+      final int contentLength;
+      contentLength = json.length;
+
+      final String contentLengthValue;
+      contentLengthValue = Integer.toString(contentLength);
+
+      final byte[] contentLengthBytes;
+      contentLengthBytes = asciiBytes(contentLengthValue);
+
+      //
+      // assemble payment processor request
+      //
 
       while (true) {
-        final int bytesRead;
-        bytesRead = exchange();
+        // before talking to the processor, obtain a permit
+        // this is required to prevent ddosing the payment processor
+        permitAcquire();
+
+        // always use the default processor
+        final SocketAddress procAddres;
+        procAddres = proc0;
+
+        int bytesRead;
+        bytesRead = 0;
+
+        try (SocketChannel processor = adapter.socketChannel()) {
+          processor.connect(procAddres);
+
+          // send request
+          buffer.clear();
+
+          buffer.put(PAYMENT_REQ);
+
+          buffer.put(contentLengthBytes);
+
+          buffer.put(CRLFCRLF);
+
+          buffer.put(json);
+
+          buffer.flip();
+
+          while (buffer.hasRemaining()) {
+            processor.write(buffer);
+          }
+
+          // read response
+          buffer.clear();
+
+          // be optimistic:
+          // let's assume the WHOLE request
+          // will be read in a single read operation
+          bytesRead = processor.read(buffer);
+        } catch (IOException e) {
+          log("Processor I/O error, cancelling task", e);
+
+          bytesRead = -1;
+        } finally {
+          // we've done talking to the processor, release the permit
+          permitRelease();
+        }
 
         // process the response (if any)
         if (bytesRead > 0) {
-          buffer.position(rubicon);
-
-          buffer.limit(rubicon + bytesRead);
+          buffer.flip();
 
           final long long0;
           long0 = buffer.getLong();
@@ -512,7 +624,7 @@ public final class Back extends Shared {
           long1 = buffer.getLong();
 
           if (long1 == PAYMENT_RESP_200) {
-            paymentOk();
+            paymentOk(time, amount);
 
             // our work is done
             return;
@@ -537,83 +649,6 @@ public final class Back extends Shared {
       }
 
       log("No result!");
-    }
-
-    private void prepare() {
-      //
-      // trx time
-      //
-
-      time = buffer.getLong();
-
-      //
-      // json
-      //
-
-      final int reqJsonLen;
-      reqJsonLen = buffer.remaining();
-
-      final byte[] json;
-      json = new byte[reqJsonLen + PAYMENT_REQ_TRAILER_LEN];
-
-      // json: copy from original request
-      int jsonIdx;
-      jsonIdx = buffer.remaining();
-
-      buffer.get(json, 0, jsonIdx);
-
-      // json: remove trailing '}'
-      jsonIdx -= 1;
-
-      // parse amount (is this really required??? or can we assume 19.9???)
-      amount = parseAmount(json, jsonIdx);
-
-      // json: requestedAt prop
-      System.arraycopy(REQUESTED_AT, 0, json, jsonIdx, REQUESTED_AT.length);
-
-      jsonIdx += REQUESTED_AT.length;
-
-      final Instant instant;
-      instant = Instant.ofEpochMilli(time);
-
-      final byte[] instantBytes;
-      instantBytes = asciiBytes(instant.toString());
-
-      System.arraycopy(instantBytes, 0, json, jsonIdx, instantBytes.length);
-
-      jsonIdx += instantBytes.length;
-
-      // json: trailer
-      json[jsonIdx++] = '\"';
-      json[jsonIdx++] = '}';
-
-      //
-      // assemble payment processor request
-      //
-
-      buffer.clear();
-
-      buffer.put(PAYMENT_REQ);
-
-      // content-length
-      final int contentLength;
-      contentLength = json.length;
-
-      final String contentLengthValue;
-      contentLengthValue = Integer.toString(contentLength);
-
-      final byte[] contentLengthBytes;
-      contentLengthBytes = asciiBytes(contentLengthValue);
-
-      buffer.put(contentLengthBytes);
-
-      buffer.put(CRLFCRLF);
-
-      buffer.put(json);
-
-      // we'll keep the request saved for reuse if necessary
-      // response will begin at the rubicon
-      rubicon = buffer.position();
     }
 
     private int parseAmount(byte[] json, int jsonIdx) {
@@ -675,51 +710,6 @@ public final class Back extends Shared {
       return amount;
     }
 
-    private int exchange() {
-      // before talking to the processor, obtain a permit
-      // this is required to prevent ddosing the payment processor
-      permitAcquire();
-
-      // always use the default processor
-      final SocketAddress procAddres;
-      procAddres = proc0;
-
-      int bytesRead;
-      bytesRead = 0;
-
-      try (SocketChannel processor = adapter.socketChannel()) {
-        processor.connect(procAddres);
-
-        // send request
-        buffer.position(0);
-
-        buffer.limit(rubicon);
-
-        while (buffer.hasRemaining()) {
-          processor.write(buffer);
-        }
-
-        // read response
-        buffer.position(rubicon);
-
-        buffer.limit(buffer.capacity());
-
-        // be optimistic:
-        // let's assume the WHOLE request
-        // will be read in a single read operation
-        bytesRead = processor.read(buffer);
-      } catch (IOException e) {
-        log("Processor I/O error, cancelling task", e);
-
-        bytesRead = -1;
-      } finally {
-        // we've done talking to the processor, release the permit
-        permitRelease();
-      }
-
-      return bytesRead;
-    }
-
     private void permitAcquire() {
       lock.lock();
       try {
@@ -744,7 +734,7 @@ public final class Back extends Shared {
       }
     }
 
-    private void paymentOk() {
+    private void paymentOk(long time, int amount) {
       final Trx trx;
       trx = new Trx(time, 0, amount);
 
@@ -779,7 +769,7 @@ public final class Back extends Shared {
   }
 
   // ##################################################################
-  // # END: Payment
+  // # END: Task
   // ##################################################################
 
   // ##################################################################

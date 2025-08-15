@@ -25,6 +25,22 @@ public class FrontTest1Payment {
 
   private final long fixedTime = Y.fixedTimeMilis();
 
+  @Test
+  public void testCase00() {
+    assertEquals(
+        """
+        POST /payments HTTP/1.1\r
+        Host: localhost:9999\r
+        User-Agent: Grafana k6/1.1.0\r
+        Content-Length: 70\r
+        Content-Type: application/json\r
+        \r
+        """.length(),
+
+        131
+    );
+  }
+
   @Test(description = "happy path")
   public void testCase01() {
     final SocketChannel client;

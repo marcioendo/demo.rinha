@@ -28,11 +28,14 @@ import java.nio.channels.ServerSocketChannel;
 import java.nio.channels.SocketChannel;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.util.Deque;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.StructuredTaskScope;
 import java.util.concurrent.StructuredTaskScope.Subtask;
 import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
 
 /// The Load Balancer.
@@ -80,7 +83,11 @@ public final class Front extends Shared {
 
   private volatile int backRound;
 
+  private final Deque<ByteBuffer> bufferPool = bufferPool();
+
   private final ServerSocketChannel channel;
+
+  private final Lock lock = new ReentrantLock();
 
   private final ThreadFactory taskFactory;
 
@@ -188,7 +195,15 @@ public final class Front extends Shared {
     }
 
     final ByteBuffer buffer;
-    buffer = ByteBuffer.allocate(BUFFER_SIZE);
+
+    lock.lock();
+    try {
+      buffer = bufferPool.removeFirst();
+    } finally {
+      lock.unlock();
+    }
+
+    buffer.clear();
 
     final Task task;
     task = new Task(buffer, client);
@@ -281,6 +296,13 @@ public final class Front extends Shared {
         }
       } catch (IOException e) {
         log("Client I/O error", e);
+      } finally {
+        lock.lock();
+        try {
+          bufferPool.addLast(buffer);
+        } finally {
+          lock.unlock();
+        }
       }
     }
 
@@ -531,7 +553,11 @@ public final class Front extends Shared {
       final byte[] bytes;
       bytes = resp.getBytes(StandardCharsets.US_ASCII);
 
-      return ByteBuffer.wrap(bytes);
+      buffer.clear();
+
+      buffer.put(bytes);
+
+      return buffer.flip();
     }
 
     private long summaryTime(int off) {

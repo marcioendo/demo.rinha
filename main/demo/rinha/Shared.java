@@ -25,7 +25,9 @@ import java.nio.ByteBuffer;
 import java.nio.channels.ServerSocketChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.Enumeration;
 import java.util.List;
 import java.util.function.Consumer;
@@ -35,6 +37,7 @@ sealed abstract class Shared permits Back, Front {
   static final Path BACK0_SOCKET = Path.of("/tmp/kag8kie5uDie3lei0toh-back0.sock");
   static final Path BACK1_SOCKET = Path.of("/tmp/kag8kie5uDie3lei0toh-back1.sock");
 
+  static final int BUFFER_POOL = 4096;
   static final int BUFFER_SIZE = 256;
 
   static final byte OP_PURGE = 1;
@@ -83,6 +86,34 @@ sealed abstract class Shared permits Back, Front {
         | Byte.toUnsignedLong(ascii[6]) << 8
         | Byte.toUnsignedLong(ascii[7]) << 0;
   }
+
+  // ##################################################################
+  // # BEGIN: Buffer Pool
+  // ##################################################################
+
+  final Deque<ByteBuffer> bufferPool() {
+    final ByteBuffer buffer;
+    buffer = ByteBuffer.allocateDirect(BUFFER_POOL * BUFFER_SIZE);
+
+    final Deque<ByteBuffer> bufferPool;
+    bufferPool = new ArrayDeque<>(BUFFER_POOL);
+
+    for (int idx = 0; idx < BUFFER_POOL; idx++) {
+      final int offset;
+      offset = idx * BUFFER_SIZE;
+
+      final ByteBuffer slice;
+      slice = buffer.slice(offset, BUFFER_SIZE);
+
+      bufferPool.addLast(slice);
+    }
+
+    return bufferPool;
+  }
+
+  // ##################################################################
+  // # END: Buffer Pool
+  // ##################################################################
 
   // ##################################################################
   // # BEGIN: Log

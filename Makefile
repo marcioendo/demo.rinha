@@ -109,6 +109,7 @@ NATIVE_IMAGEX += -march=x86-64-v3
 ifeq ($(ENABLE_PREVIEW),1)
 NATIVE_IMAGEX += --enable-preview
 endif
+NATIVE_IMAGEX += --gc=epsilon 
 NATIVE_IMAGEX += --install-exit-handlers
 NATIVE_IMAGEX += --module-path $(CLASS_OUTPUT)
 
@@ -376,7 +377,7 @@ services:
       resources:
         limits:
           cpus: "0.6"
-          memory: "150MB"
+          memory: "125MB"
 
   back1:
     image: $(BDOCKER_TAG)
@@ -395,7 +396,7 @@ services:
       resources:
         limits:
           cpus: "0.6"
-          memory: "150MB"
+          memory: "125MB"
 
   front:
     image: $(FDOCKER_TAG)
@@ -415,7 +416,7 @@ services:
       resources:
         limits:
           cpus: "0.3"
-          memory: "50MB"
+          memory: "100MB"
 
 networks:
   backend:
