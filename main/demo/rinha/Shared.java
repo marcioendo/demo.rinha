@@ -32,9 +32,8 @@ import java.util.function.Consumer;
 
 sealed abstract class Shared permits Back, Front {
 
-  static final Path BACK0_SOCKET = Path.of("/tmp/back0");
-
-  static final Path BACK1_SOCKET = Path.of("/tmp/back1");
+  static final Path BACK0_SOCKET = Path.of("/tmp/kag8kie5uDie3lei0toh-back0.sock");
+  static final Path BACK1_SOCKET = Path.of("/tmp/kag8kie5uDie3lei0toh-back1.sock");
 
   static final int BUFFER_SIZE = 256;
 
