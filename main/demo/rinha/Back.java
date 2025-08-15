@@ -37,8 +37,6 @@ import java.util.function.Consumer;
 /// An instance of our server.
 public final class Back extends Shared {
 
-  private static final int MAX_PERMITS = 50;
-
   private static final int MAX_TRXS = 17_000;
 
   /// Testing Adapter
@@ -107,6 +105,8 @@ public final class Back extends Shared {
 
   private final Lock lock = new ReentrantLock();
 
+  private final int maxPermits;
+
   private final SocketAddress proc0;
 
   @SuppressWarnings("unused")
@@ -129,12 +129,15 @@ public final class Back extends Shared {
   private Back(
       Adapter adapter,
       ServerSocketChannel channel,
+      int maxPermits,
       SocketAddress proc0,
       SocketAddress proc1,
       ThreadFactory taskFactory) {
     this.adapter = adapter;
 
     this.channel = channel;
+
+    this.maxPermits = maxPermits;
 
     this.proc0 = proc0;
 
@@ -169,8 +172,8 @@ public final class Back extends Shared {
     // Args
     //
 
-    if (args.length != 1) {
-      log("Syntax: back ID");
+    if (args.length != 2) {
+      log("Syntax: back ID MAX_PERMITS");
 
       return null;
     }
@@ -198,6 +201,20 @@ public final class Back extends Shared {
     }
 
     shutdownHook.accept(() -> adapter.shutdownHook(socket));
+
+    // MAX_PERMITS
+    final int maxPermits;
+
+    try {
+      final String arg;
+      arg = args[argsIndex++];
+
+      maxPermits = Integer.parseInt(arg);
+    } catch (NumberFormatException e) {
+      log("MAX_PERMITS must an integer value");
+
+      return null;
+    }
 
     //
     // ServerSocketChannel
@@ -246,7 +263,7 @@ public final class Back extends Shared {
     // Back
     //
 
-    return new Back(adapter, channel, proc0, proc1, taskFactory);
+    return new Back(adapter, channel, maxPermits, proc0, proc1, taskFactory);
   }
 
   // ##################################################################
@@ -707,7 +724,7 @@ public final class Back extends Shared {
     private void permitAcquire() {
       lock.lock();
       try {
-        while (procAcquired == MAX_PERMITS) {
+        while (procAcquired == maxPermits) {
           procReleased.awaitUninterruptibly();
         }
 
