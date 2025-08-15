@@ -190,11 +190,8 @@ public final class Front extends Shared {
     final ByteBuffer buffer;
     buffer = ByteBuffer.allocate(BUFFER_SIZE);
 
-    final long time;
-    time = adapter.currentTimeMillis();
-
     final Task task;
-    task = new Task(buffer, client, time);
+    task = new Task(buffer, client);
 
     final Thread thread;
     thread = taskFactory.newThread(task);
@@ -228,14 +225,10 @@ public final class Front extends Shared {
 
     final SocketChannel client;
 
-    final long time;
-
-    Task(ByteBuffer buffer, SocketChannel client, long time) {
+    Task(ByteBuffer buffer, SocketChannel client) {
       this.buffer = buffer;
 
       this.client = client;
-
-      this.time = time;
     }
 
     private static final long ROUTE_POST_PAYMENTS = asciiLong("POST /pa");
@@ -406,7 +399,7 @@ public final class Front extends Shared {
 
       buffer.put(OP_PAYMENTS);
 
-      buffer.putLong(time);
+      buffer.putLong(adapter.currentTimeMillis());
 
       buffer.reset();
 

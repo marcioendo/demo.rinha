@@ -37,7 +37,7 @@ import java.util.function.Consumer;
 /// An instance of our server.
 public final class Back extends Shared {
 
-  private static final int MAX_TRXS = 17_000;
+  private static final int MAX_TRXS = 9_000;
 
   /// Testing Adapter
   static class Adapter {
@@ -400,32 +400,31 @@ public final class Back extends Shared {
       final long time1;
       time1 = buffer.getLong();
 
-      final int max;
-
       lock.lock();
       try {
+        final int max;
         max = trxsIndex;
+
+        for (int idx = 0; idx < max; idx++) {
+          final Trx trx;
+          trx = trxs[idx];
+
+          if (trx.time < time0 || trx.time > time1) {
+            continue;
+          }
+
+          if (trx.proc == 0) {
+            req0 += 1;
+
+            amount0 += trx.amount;
+          } else {
+            req1 += 1;
+
+            amount1 += trx.amount;
+          }
+        }
       } finally {
         lock.unlock();
-      }
-
-      for (int idx = 0; idx < max; idx++) {
-        final Trx trx;
-        trx = trxs[idx];
-
-        if (trx.time < time0 || trx.time > time1) {
-          continue;
-        }
-
-        if (trx.proc == 0) {
-          req0 += 1;
-
-          amount0 += trx.amount;
-        } else {
-          req1 += 1;
-
-          amount1 += trx.amount;
-        }
       }
 
       buffer.clear();
