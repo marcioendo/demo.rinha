@@ -360,7 +360,7 @@ define COMPOSE_CONTENTS =
 services:
   back0:
     image: $(BDOCKER_TAG)
-    command: ["0"]
+    command: ["0", "50"]
     container_name: back0
     hostname: back0
     volumes:
@@ -379,7 +379,7 @@ services:
 
   back1:
     image: $(BDOCKER_TAG)
-    command: ["1"]
+    command: ["1", "50"]
     container_name: back1
     hostname: back1
     volumes:
