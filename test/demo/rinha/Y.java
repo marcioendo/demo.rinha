@@ -55,7 +55,7 @@ final class Y {
   // ##################################################################
 
   public static Back back(Back.Adapter adapter) {
-    return back(adapter, "0", "50");
+    return back(adapter, "0");
   }
 
   private static Back back(Back.Adapter adapter, String... args) {
@@ -454,8 +454,6 @@ final class Y {
 
     private int readDataIndex;
 
-    private SocketAddress remoteAddress;
-
     private final ByteArrayOutputStream write = new ByteArrayOutputStream();
 
     private int writeSpeed = -1;
@@ -507,20 +505,10 @@ final class Y {
     @Override
     public final boolean connect(SocketAddress remote) throws IOException {
       if (connect instanceof Boolean b) {
-        final boolean result;
-        result = b.booleanValue();
-
-        remoteAddress = remote;
-
-        return result;
+        return b.booleanValue();
       } else {
         throw new UnsupportedOperationException("Implement me :: type=" + connect.getClass());
       }
-    }
-
-    @Override
-    public final SocketAddress getRemoteAddress() throws IOException {
-      return remoteAddress;
     }
 
     @Override

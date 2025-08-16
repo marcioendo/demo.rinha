@@ -75,12 +75,12 @@ public class FrontTest2Summary {
     assertEquals(front._exec(), "Front[backRound=0]");
 
     assertEquals(
-        Y.socketChannelWrite(front._back0(back0, back1)),
+        Y.socketChannelWrite(back0),
         Y.frontMsgSummary(time0, time1)
     );
 
     assertEquals(
-        Y.socketChannelWrite(front._back1(back0, back1)),
+        Y.socketChannelWrite(back1),
         Y.frontMsgSummary(time0, time1)
     );
 

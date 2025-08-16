@@ -21,7 +21,7 @@
 ## Coordinates
 GROUP_ID := br.dev.o7.marcio
 ARTIFACT_ID := demo.rinha
-VERSION := 004
+VERSION := 005-SNAPSHOT
 
 ## JDK 24 required
 JAVA_RELEASE := 24
@@ -109,6 +109,7 @@ NATIVE_IMAGEX += -march=x86-64-v3
 ifeq ($(ENABLE_PREVIEW),1)
 NATIVE_IMAGEX += --enable-preview
 endif
+NATIVE_IMAGEX += --gc=epsilon -R:MaximumHeapSizePercent=85
 NATIVE_IMAGEX += --install-exit-handlers
 NATIVE_IMAGEX += --module-path $(CLASS_OUTPUT)
 
