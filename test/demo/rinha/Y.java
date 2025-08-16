@@ -81,8 +81,6 @@ final class Y {
 
     void socketChannel(SocketChannel value);
 
-    void socketChannelHealth(SocketChannel value);
-
   }
 
   private static final class ThisBackAdapter extends Back.Adapter implements BackAdapterOptions {
@@ -97,10 +95,6 @@ final class Y {
 
     private int socketChannelsIndex;
 
-    private final List<SocketChannel> socketChannelsHealth = new ArrayList<>();
-
-    private int socketChannelsHealthIndex;
-
     @Override
     public final void serverSocketChannel(ServerSocketChannel value) {
       if (serverSocketChannel != null) {
@@ -113,13 +107,6 @@ final class Y {
     @Override
     public final void socketChannel(SocketChannel value) {
       socketChannels.add(
-          Objects.requireNonNull(value, "value == null")
-      );
-    }
-
-    @Override
-    public final void socketChannelHealth(SocketChannel value) {
-      socketChannelsHealth.add(
           Objects.requireNonNull(value, "value == null")
       );
     }
@@ -140,18 +127,9 @@ final class Y {
     }
 
     @Override
-    final SocketChannel socketChannel() throws IOException {
+    final synchronized SocketChannel socketChannel() throws IOException {
       if (socketChannelsIndex < socketChannels.size()) {
         return socketChannels.get(socketChannelsIndex++);
-      } else {
-        return null;
-      }
-    }
-
-    @Override
-    final SocketChannel socketChannelHealth() throws IOException {
-      if (socketChannelsHealthIndex < socketChannelsHealth.size()) {
-        return socketChannelsHealth.get(socketChannelsHealthIndex++);
       } else {
         return null;
       }

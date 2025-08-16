@@ -183,11 +183,17 @@ public final class Front extends Shared {
 
   private void server() {
     while (true) { // we don't need to be interruptible
-      serverListen();
+      final Runnable task;
+      task = serverListen();
+
+      final Thread thread;
+      thread = taskFactory.newThread(task);
+
+      thread.start();
     }
   }
 
-  final Thread serverListen() {
+  final Runnable serverListen() {
     final SocketChannel client;
 
     try {
@@ -209,15 +215,7 @@ public final class Front extends Shared {
 
     buffer.clear();
 
-    final Task task;
-    task = new Task(buffer, client);
-
-    final Thread thread;
-    thread = taskFactory.newThread(task);
-
-    thread.start();
-
-    return thread;
+    return new Task(buffer, client);
   }
 
   // ##################################################################
@@ -770,16 +768,10 @@ public final class Front extends Shared {
   }
 
   final String _exec() {
-    final Thread thread;
-    thread = serverListen();
+    final Runnable task;
+    task = serverListen();
 
-    if (thread != null) {
-      try {
-        thread.join();
-      } catch (InterruptedException e) {
-        throw new RuntimeException(e);
-      }
-    }
+    task.run();
 
     return _debug();
   }
