@@ -454,6 +454,8 @@ final class Y {
 
     private int readDataIndex;
 
+    private SocketAddress remoteAddress;
+
     private final ByteArrayOutputStream write = new ByteArrayOutputStream();
 
     private int writeSpeed = -1;
@@ -505,10 +507,20 @@ final class Y {
     @Override
     public final boolean connect(SocketAddress remote) throws IOException {
       if (connect instanceof Boolean b) {
-        return b.booleanValue();
+        final boolean result;
+        result = b.booleanValue();
+
+        remoteAddress = remote;
+
+        return result;
       } else {
         throw new UnsupportedOperationException("Implement me :: type=" + connect.getClass());
       }
+    }
+
+    @Override
+    public final SocketAddress getRemoteAddress() throws IOException {
+      return remoteAddress;
     }
 
     @Override

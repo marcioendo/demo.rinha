@@ -16,6 +16,7 @@
 package demo.rinha;
 
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
 import java.net.InetAddress;
@@ -26,6 +27,7 @@ import java.net.UnixDomainSocketAddress;
 import java.nio.ByteBuffer;
 import java.nio.channels.ServerSocketChannel;
 import java.nio.channels.SocketChannel;
+import java.util.NoSuchElementException;
 import java.util.concurrent.ThreadFactory;
 import java.util.function.Consumer;
 
@@ -73,6 +75,10 @@ public final class Front extends Shared {
   private final SocketAddress back1;
 
   private volatile int backRound;
+
+  private final byte[] trxs = new byte[17_000];
+
+  private int trxsIndex;
 
   private Front(
       Adapter adapter,
@@ -192,7 +198,21 @@ public final class Front extends Shared {
 
   @Override
   final Runnable task(ByteBuffer buffer, SocketChannel channel) {
-    return new FrontTask(buffer, channel, this);
+    final int trx;
+    trx = trxsIndex++;
+
+    return new FrontTask(buffer, channel, this, trx);
+  }
+
+  final void taskEnd(ByteBuffer buffer, int idx, byte op) {
+    lock.lock();
+    try {
+      bufferPoolOpaque(buffer);
+
+      trxs[idx] = op;
+    } finally {
+      lock.unlock();
+    }
   }
 
   // ##################################################################
@@ -200,8 +220,78 @@ public final class Front extends Shared {
   // ##################################################################
 
   // ##################################################################
+  // # BEGIN: Debug
+  // ##################################################################
+
+  @Override
+  final void failed() {
+    int purge = 0, payment = 0, summary = 0, unknown = 0;
+
+    lock.lock();
+    try {
+      for (int idx = 0; idx < trxsIndex; idx++) {
+        switch (trxs[idx]) {
+          case OP_PURGE -> purge += 1;
+          case OP_PAYMENTS -> payment += 1;
+          case OP_SUMMARY -> summary += 1;
+          default -> unknown += 1;
+        }
+      }
+    } finally {
+      lock.unlock();
+    }
+
+    System.out.print("""
+    Front
+    -   channel: %s
+    -     back0: %s
+    -     back1: %s
+    - backRound: %d
+    -      trxs: %d [purge=%d,payment=%d,summary=%d,unknown=%d]
+    """.formatted(
+        dumpChannel(),
+        dumpSocketAddress(back0),
+        dumpSocketAddress(back1),
+        backRound,
+        trxsIndex,
+        purge,
+        payment,
+        summary,
+        unknown
+    ));
+  }
+
+  // ##################################################################
+  // # END: Debug
+  // ##################################################################
+
+  // ##################################################################
   // # BEGIN: Testing API
   // ##################################################################
+
+  final SocketChannel _back0(SocketChannel maybe0, SocketChannel maybe1) {
+    return _back(back0, maybe0, maybe1);
+  }
+
+  final SocketChannel _back1(SocketChannel maybe0, SocketChannel maybe1) {
+    return _back(back1, maybe0, maybe1);
+  }
+
+  private SocketChannel _back(SocketAddress actual, SocketChannel maybe0, SocketChannel maybe1) {
+    try {
+      if (maybe0.getRemoteAddress() == actual) {
+        return maybe0;
+      }
+
+      if (maybe1.getRemoteAddress() == actual) {
+        return maybe1;
+      }
+
+      throw new NoSuchElementException();
+    } catch (IOException e) {
+      throw new UncheckedIOException(e);
+    }
+  }
 
   final String _debug() {
     return "Front[backRound=%d]".formatted(backRound);

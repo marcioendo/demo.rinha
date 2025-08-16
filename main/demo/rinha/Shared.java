@@ -16,14 +16,17 @@
 package demo.rinha;
 
 import java.io.IOException;
+import java.io.PrintStream;
 import java.net.Inet4Address;
 import java.net.InetAddress;
 import java.net.NetworkInterface;
 import java.net.SocketAddress;
+import java.net.UnixDomainSocketAddress;
 import java.nio.ByteBuffer;
 import java.nio.channels.ServerSocketChannel;
 import java.nio.channels.SocketChannel;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -117,6 +120,10 @@ sealed abstract class Shared permits Back, Front {
     }
   }
 
+  final void bufferPoolOpaque(ByteBuffer buffer) {
+    bufferPool.addLast(buffer);
+  }
+
   // ##################################################################
   // # END: Buffer Pool
   // ##################################################################
@@ -125,14 +132,27 @@ sealed abstract class Shared permits Back, Front {
   // # BEGIN: Server
   // ##################################################################
 
+  private long lastCheck;
+
   final void execute() {
     try {
       while (active) {
+        final long now;
+        now = System.currentTimeMillis();
+
+        if ((now - lastCheck) > 5_000) {
+          failed();
+
+          lastCheck = now;
+        }
+
         executeOne();
       }
     } catch (Throwable e) {
-      throw new UnsupportedOperationException("Implement me", e);
+      e.printStackTrace(System.out);
     }
+
+    failed();
   }
 
   // returns Thread to ease testing
@@ -157,9 +177,17 @@ sealed abstract class Shared permits Back, Front {
     final Thread thread;
     thread = taskFactory.newThread(task);
 
+    thread.setUncaughtExceptionHandler(this::exceptionHandler);
+
     thread.start();
 
     return thread;
+  }
+
+  private void exceptionHandler(Thread t, Throwable e) {
+    active = false;
+
+    e.printStackTrace(System.out);
   }
 
   // ##################################################################
@@ -192,17 +220,47 @@ sealed abstract class Shared permits Back, Front {
   @SuppressWarnings("serial")
   static final class TaskException extends RuntimeException {
 
-    @SuppressWarnings("unused")
-    private ByteBuffer buffer;
+    private final ByteBuffer buffer;
 
-    TaskException(String message, ByteBuffer buffer) {
+    private final Runnable task;
+
+    TaskException(Runnable task, ByteBuffer buffer, String message) {
       super(message);
 
       this.buffer = buffer;
+
+      this.task = task;
     }
 
-    TaskException(Throwable cause) {
+    TaskException(Runnable task, ByteBuffer buffer, Throwable cause) {
       super(cause);
+
+      this.buffer = buffer;
+
+      this.task = task;
+    }
+
+    @Override
+    public final void printStackTrace(PrintStream s) {
+      super.printStackTrace(s);
+
+      if (buffer != null) {
+        try {
+          final byte[] bytes;
+          bytes = new byte[buffer.limit()];
+
+          buffer.get(0, bytes);
+
+          final String text;
+          text = new String(bytes, StandardCharsets.UTF_8);
+
+          s.println(text);
+        } catch (Throwable e) {
+          s.println(buffer);
+        }
+      }
+
+      s.println(task);
     }
 
   }
@@ -246,6 +304,8 @@ sealed abstract class Shared permits Back, Front {
   // # BEGIN: Log
   // ##################################################################
 
+  abstract void failed();
+
   static String debug(ByteBuffer buf) {
     buf.mark();
 
@@ -259,7 +319,7 @@ sealed abstract class Shared permits Back, Front {
     return new String(bytes, StandardCharsets.US_ASCII);
   }
 
-  static void debug(ServerSocketChannel channel) {
+  final String dumpChannel() {
     try {
       if (channel != null) {
         final SocketAddress la;
@@ -268,10 +328,23 @@ sealed abstract class Shared permits Back, Front {
         final boolean open;
         open = channel.isOpen();
 
-        System.out.printf("ServerSocketChannel[localAddress=%s,open=%s]%n", la, open);
+        return "ServerSocketChannel[localAddress=%s,open=%s]".formatted(la, open);
+      } else {
+        return "null";
       }
     } catch (IOException e) {
-      log(e);
+      return e.getMessage();
+    }
+  }
+
+  final String dumpSocketAddress(SocketAddress addr) {
+    if (addr instanceof UnixDomainSocketAddress unix) {
+      final Path path;
+      path = unix.getPath();
+
+      return "UnixDomainSocketAddress[path=%s,exists=%s]".formatted(path, Files.exists(path));
+    } else {
+      return addr.toString();
     }
   }
 

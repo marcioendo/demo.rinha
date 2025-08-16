@@ -29,6 +29,8 @@ final class BackTask implements Runnable {
 
   private final SocketChannel front;
 
+  private byte op;
+
   BackTask(Back back, ByteBuffer buffer, SocketChannel front) {
     this.back = back;
 
@@ -42,15 +44,18 @@ final class BackTask implements Runnable {
     try {
       run0();
     } catch (Throwable e) {
-      throw new Shared.TaskException(e);
+      throw new Shared.TaskException(this, buffer, e);
     } finally {
       back.bufferPool(buffer);
     }
   }
 
-  private void run0() throws IOException {
-    byte op = 0;
+  @Override
+  public final String toString() {
+    return "BackTask[op=%d]".formatted(op);
+  }
 
+  private void run0() throws IOException {
     int paymentLimit = 0;
 
     try (front) {
@@ -278,7 +283,7 @@ final class BackTask implements Runnable {
         long0 = buffer.getLong();
 
         if (long0 != PAYMENT_RESP) {
-          throw new Shared.TaskException("Unexpected payment processor response", buffer);
+          throw new Shared.TaskException(this, buffer, "Unexpected payment processor response");
         }
 
         final long long1;
@@ -296,10 +301,10 @@ final class BackTask implements Runnable {
         }
 
         else {
-          throw new Shared.TaskException("Unexpected payment processor response", buffer);
+          throw new Shared.TaskException(this, buffer, "Unexpected payment processor response");
         }
       } else {
-        throw new Shared.TaskException("No data from payment processor", buffer);
+        throw new Shared.TaskException(this, buffer, "No data from payment processor");
       }
     }
   }

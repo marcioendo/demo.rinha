@@ -327,12 +327,13 @@ public final class Back extends Shared {
 
     lock.lock();
     try {
-      final int max;
-      max = trxsIndex;
-
-      for (int idx = 0; idx < max; idx++) {
+      for (int idx = 0; idx < trxs.length; idx++) {
         final Trx trx;
         trx = trxs[idx];
+
+        if (trx == null) {
+          continue;
+        }
 
         if (trx.time < time0 || trx.time > time1) {
           continue;
@@ -371,7 +372,31 @@ public final class Back extends Shared {
   private record Trx(long time, int proc, int amount) {}
 
   // ##################################################################
-  // # BEGIN: Trx
+  // # END: Trx
+  // ##################################################################
+
+  // ##################################################################
+  // # BEGIN: Debug
+  // ##################################################################
+
+  @Override
+  final void failed() {
+    System.out.print("""
+    Back
+    -     channel: %s
+    - procAquired: %d
+    -   trxsIndex: %d
+    -     waiting: %d
+    """.formatted(
+        dumpChannel(),
+        procAcquired,
+        trxsIndex,
+        waiting
+    ));
+  }
+
+  // ##################################################################
+  // # END: Debug
   // ##################################################################
 
   // ##################################################################

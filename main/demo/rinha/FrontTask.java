@@ -33,12 +33,16 @@ final class FrontTask implements Runnable {
 
   private final Front front;
 
-  FrontTask(ByteBuffer buffer, SocketChannel client, Front front) {
+  private final int trx;
+
+  FrontTask(ByteBuffer buffer, SocketChannel client, Front front, int trx) {
     this.buffer = buffer;
 
     this.client = client;
 
     this.front = front;
+
+    this.trx = trx;
   }
 
   private static final long ROUTE_POST_PAYMENTS = Shared.asciiLong("POST /pa");
@@ -49,16 +53,16 @@ final class FrontTask implements Runnable {
 
   @Override
   public final void run() {
+    byte op;
+    op = Shared.OP_UNKNOWN;
+
     try (client) {
       // read the request
       final int clientRead;
       clientRead = client.read(buffer);
 
       if (clientRead <= 0) {
-        // be optimistic:
-        // let's assume the WHOLE request
-        // will be read in a single read operation
-        return;
+        throw new Shared.TaskException(this, buffer, "No data read from client");
       }
 
       buffer.flip();
@@ -68,18 +72,28 @@ final class FrontTask implements Runnable {
       first = buffer.getLong();
 
       if (first == ROUTE_POST_PAYMENTS) {
+        op = Shared.OP_PAYMENTS;
+
         payment();
       }
 
       else if (first == ROUTE_GET_SUMMARY) {
+        op = Shared.OP_SUMMARY;
+
         summary();
       }
 
       else if (first == ROUTE_POST_PURGE) {
+        op = Shared.OP_PURGE;
+
         purge();
       }
 
       else {
+        buffer.rewind();
+
+        Shared.log("unknown", buffer);
+
         unknown();
       }
 
@@ -88,10 +102,15 @@ final class FrontTask implements Runnable {
         client.write(buffer);
       }
     } catch (Throwable e) {
-      throw new Shared.TaskException(e);
+      throw new Shared.TaskException(this, buffer, e);
     } finally {
-      front.bufferPool(buffer);
+      front.taskEnd(buffer, trx, op);
     }
+  }
+
+  @Override
+  public final String toString() {
+    return "FrontTask[trx=%d]".formatted(trx);
   }
 
   class PurgeTask implements Callable<Boolean> {
