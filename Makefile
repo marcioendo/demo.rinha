@@ -21,7 +21,7 @@
 ## Coordinates
 GROUP_ID := br.dev.o7.marcio
 ARTIFACT_ID := demo.rinha
-VERSION := 004-SNAPSHOT
+VERSION := 004
 
 ## JDK 24 required
 JAVA_RELEASE := 24
