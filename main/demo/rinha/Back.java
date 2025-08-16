@@ -236,10 +236,6 @@ public final class Back extends Shared {
       return null;
     }
 
-    logf("proc0=%s%n", proc0);
-
-    logf("proc1=%s%n", proc1);
-
     //
     // Task Factory
     //

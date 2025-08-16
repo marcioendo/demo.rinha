@@ -220,16 +220,6 @@ public final class Front extends Shared {
     return thread;
   }
 
-  private SocketAddress nextBackAddress() {
-    final int round;
-    round = (int) BACK_ROUND.getAndAdd(this, 1);
-
-    final int backId;
-    backId = round & 1;
-
-    return backId == 0 ? back0 : back1;
-  }
-
   // ##################################################################
   // # END: Server
   // ##################################################################
@@ -250,190 +240,119 @@ public final class Front extends Shared {
       this.client = client;
     }
 
-    private static final long ROUTE_POST_PAYMENTS = asciiLong("POST /pa");
-
-    private static final long ROUTE_POST_PURGE = asciiLong("POST /pu");
-
-    private static final long ROUTE_GET_SUMMARY = asciiLong("GET /pay");
-
     @Override
     public final void run() {
-      try (client) {
-        // read the request
-        final int clientRead;
-        clientRead = client.read(buffer);
+      task(this);
+    }
 
-        if (clientRead <= 0) {
-          // be optimistic:
-          // let's assume the WHOLE request
-          // will be read in a single read operation
-          return;
-        }
+  }
 
-        buffer.flip();
+  private void task(Task task) {
+    final ByteBuffer buffer;
+    buffer = task.buffer;
 
-        // route
-        final long first;
-        first = buffer.getLong();
+    final SocketChannel client;
+    client = task.client;
 
-        if (first == ROUTE_POST_PAYMENTS) {
-          payment();
-        }
-
-        else if (first == ROUTE_GET_SUMMARY) {
-          summary();
-        }
-
-        else if (first == ROUTE_POST_PURGE) {
-          purge();
-        }
-
-        else {
-          unknown();
-        }
-
-        // write response
-        while (buffer.hasRemaining()) {
-          client.write(buffer);
-        }
-      } catch (IOException e) {
-        log("Client I/O error", e);
+    try (client) {
+      taskRoute(buffer, client);
+    } catch (IOException e) {
+      log("Client I/O error", e);
+    } finally {
+      lock.lock();
+      try {
+        bufferPool.addLast(buffer);
       } finally {
-        lock.lock();
-        try {
-          bufferPool.addLast(buffer);
-        } finally {
-          lock.unlock();
-        }
+        lock.unlock();
       }
     }
+  }
 
-    class PurgeTask implements Callable<Boolean> {
-      private final SocketAddress backAddress;
+  private SocketAddress taskBackAddress() {
+    final int round;
+    round = (int) BACK_ROUND.getAndAdd(this, 1);
 
-      private final ByteBuffer slice;
+    final int backId;
+    backId = round & 1;
 
-      PurgeTask(SocketAddress backAddress, ByteBuffer slice) {
-        this.backAddress = backAddress;
+    return backId == 0 ? back0 : back1;
+  }
 
-        this.slice = slice;
-      }
+  // ##################################################################
+  // # BEGIN: Task: Route
+  // ##################################################################
 
-      @Override
-      public final Boolean call() throws Exception {
-        // assemble the request
-        slice.put(OP_PURGE);
+  private static final long ROUTE_POST_PAYMENTS = asciiLong("POST /pa");
 
-        slice.flip();
+  private static final long ROUTE_POST_PURGE = asciiLong("POST /pu");
 
-        int bytesRead;
-        bytesRead = 0;
+  private static final long ROUTE_GET_SUMMARY = asciiLong("GET /pay");
 
-        try (SocketChannel back = adapter.socketChannel()) {
-          // send the request
-          back.connect(backAddress);
+  private void taskRoute(ByteBuffer buffer, SocketChannel client) throws IOException {
+    // read the request
+    final int clientRead;
+    clientRead = client.read(buffer);
 
-          while (slice.hasRemaining()) {
-            back.write(slice);
-          }
-
-          // read the response
-          slice.clear();
-
-          // be optimistic:
-          // let's assume the WHOLE request
-          // will be read in a single read operation
-          bytesRead = back.read(slice);
-        } catch (IOException e) {
-          log("Backend I/O error", e);
-        }
-
-        // process the response (if any)
-        if (bytesRead == 4) {
-          slice.flip();
-
-          final int trx;
-          trx = slice.getInt();
-
-          return trx == PURGE_200;
-        } else {
-          return Boolean.FALSE;
-        }
-      }
+    if (clientRead <= 0) {
+      // be optimistic:
+      // let's assume the WHOLE request
+      // will be read in a single read operation
+      return;
     }
 
-    private void purge() {
-      final PurgeTask purge0;
-      purge0 = new PurgeTask(back0, buffer.slice(0, 4));
+    buffer.flip();
 
-      final PurgeTask purge1;
-      purge1 = new PurgeTask(back1, buffer.slice(4, 4));
+    // route
+    final long first;
+    first = buffer.getLong();
 
-      boolean success = false;
-
-      try (var scope = new StructuredTaskScope.ShutdownOnFailure("purge", taskFactory)) {
-        final Subtask<Boolean> task0;
-        task0 = scope.fork(purge0);
-
-        final Subtask<Boolean> task1;
-        task1 = scope.fork(purge1);
-
-        scope.join();
-
-        scope.throwIfFailed();
-
-        final boolean res0;
-        res0 = task0.get();
-
-        final boolean res1;
-        res1 = task1.get();
-
-        success = res0 && res1;
-      } catch (ExecutionException e) {
-        log("Failed to execute purge", e);
-      } catch (InterruptedException e) {
-        log("Interrupted while running purge", e);
-      }
-
-      buffer.clear();
-
-      buffer.put(success ? RESP_200 : RESP_500);
-
-      buffer.flip();
+    if (first == ROUTE_POST_PAYMENTS) {
+      taskPayment(buffer);
     }
 
-    private void payment() {
-      // we're assuming the request is exactly:
-      //
-      // POST /payments HTTP/1.1\r\n
-      // Host: localhost:9999\r\n
-      // User-Agent: Grafana k6/1.1.0\r\n
-      // Content-Length: 70\r\n
-      // Content-Type: application/json\r\n
-      // \r\n
-      //
-      // which means request body starts at 131
-      // we take out the 8 bytes we read at the route parsing
-      int bufferIndex;
-      bufferIndex = 131;
+    else if (first == ROUTE_GET_SUMMARY) {
+      taskSummary(buffer);
+    }
 
-      bufferIndex -= 8; // time
+    else if (first == ROUTE_POST_PURGE) {
+      taskPurge(buffer);
+    }
 
-      bufferIndex -= 1; // opcode
+    else {
+      taskUnknown(buffer);
+    }
 
-      buffer.position(bufferIndex);
+    // write response
+    while (buffer.hasRemaining()) {
+      client.write(buffer);
+    }
+  }
 
-      buffer.mark();
+  // ##################################################################
+  // # END: Task: Route
+  // ##################################################################
 
-      buffer.put(OP_PAYMENTS);
+  // ##################################################################
+  // # BEGIN: Task: Purge
+  // ##################################################################
 
-      buffer.putLong(adapter.currentTimeMillis());
+  class PurgeTask implements Callable<Boolean> {
+    private final SocketAddress backAddress;
 
-      buffer.reset();
+    private final ByteBuffer slice;
 
-      // choose backend
-      final SocketAddress backAddress;
-      backAddress = nextBackAddress();
+    PurgeTask(SocketAddress backAddress, ByteBuffer slice) {
+      this.backAddress = backAddress;
+
+      this.slice = slice;
+    }
+
+    @Override
+    public final Boolean call() throws Exception {
+      // assemble the request
+      slice.put(OP_PURGE);
+
+      slice.flip();
 
       int bytesRead;
       bytesRead = 0;
@@ -442,266 +361,401 @@ public final class Front extends Shared {
         // send the request
         back.connect(backAddress);
 
-        while (buffer.hasRemaining()) {
-          back.write(buffer);
+        while (slice.hasRemaining()) {
+          back.write(slice);
         }
 
         // read the response
-        buffer.clear();
+        slice.clear();
 
         // be optimistic:
         // let's assume the WHOLE request
         // will be read in a single read operation
-        bytesRead = back.read(buffer);
+        bytesRead = back.read(slice);
       } catch (IOException e) {
         log("Backend I/O error", e);
       }
 
       // process the response (if any)
-      if (bytesRead > 0) {
-        // forward the response as it is
-        buffer.flip();
+      if (bytesRead == 4) {
+        slice.flip();
+
+        final int trx;
+        trx = slice.getInt();
+
+        return trx == PURGE_200;
       } else {
+        return Boolean.FALSE;
+      }
+    }
+  }
+
+  private void taskPurge(ByteBuffer buffer) {
+    final PurgeTask purge0;
+    purge0 = new PurgeTask(back0, buffer.slice(0, 4));
+
+    final PurgeTask purge1;
+    purge1 = new PurgeTask(back1, buffer.slice(4, 4));
+
+    boolean success = false;
+
+    try (var scope = new StructuredTaskScope.ShutdownOnFailure("purge", taskFactory)) {
+      final Subtask<Boolean> task0;
+      task0 = scope.fork(purge0);
+
+      final Subtask<Boolean> task1;
+      task1 = scope.fork(purge1);
+
+      scope.join();
+
+      scope.throwIfFailed();
+
+      final boolean res0;
+      res0 = task0.get();
+
+      final boolean res1;
+      res1 = task1.get();
+
+      success = res0 && res1;
+    } catch (ExecutionException e) {
+      log("Failed to execute purge", e);
+    } catch (InterruptedException e) {
+      log("Interrupted while running purge", e);
+    }
+
+    buffer.clear();
+
+    buffer.put(success ? RESP_200 : RESP_500);
+
+    buffer.flip();
+  }
+
+  // ##################################################################
+  // # END: Task: Purge
+  // ##################################################################
+
+  // ##################################################################
+  // # BEGIN: Task: Payment
+  // ##################################################################
+
+  private void taskPayment(ByteBuffer buffer) {
+    // we're assuming the request is exactly:
+    //
+    // POST /payments HTTP/1.1\r\n
+    // Host: localhost:9999\r\n
+    // User-Agent: Grafana k6/1.1.0\r\n
+    // Content-Length: 70\r\n
+    // Content-Type: application/json\r\n
+    // \r\n
+    //
+    // which means request body starts at 131
+    // we take out the 8 bytes we read at the route parsing
+    int bufferIndex;
+    bufferIndex = 131;
+
+    bufferIndex -= 8; // time
+
+    bufferIndex -= 1; // opcode
+
+    buffer.position(bufferIndex);
+
+    buffer.mark();
+
+    buffer.put(OP_PAYMENTS);
+
+    buffer.putLong(adapter.currentTimeMillis());
+
+    buffer.reset();
+
+    // choose backend
+    final SocketAddress backAddress;
+    backAddress = taskBackAddress();
+
+    int bytesRead;
+    bytesRead = 0;
+
+    try (SocketChannel back = adapter.socketChannel()) {
+      // send the request
+      back.connect(backAddress);
+
+      while (buffer.hasRemaining()) {
+        back.write(buffer);
+      }
+
+      // read the response
+      buffer.clear();
+
+      // be optimistic:
+      // let's assume the WHOLE request
+      // will be read in a single read operation
+      bytesRead = back.read(buffer);
+    } catch (IOException e) {
+      log("Backend I/O error", e);
+    }
+
+    // process the response (if any)
+    if (bytesRead > 0) {
+      // forward the response as it is
+      buffer.flip();
+    } else {
+      buffer.clear();
+
+      buffer.put(RESP_500);
+
+      buffer.flip();
+    }
+  }
+
+  // ##################################################################
+  // # END: Task: Payment
+  // ##################################################################
+
+  // ##################################################################
+  // # BEGIN: Task: Summary
+  // ##################################################################
+
+  private record Summary(int req0, int amount0, int req1, int amount1) {
+    static final Summary ERROR = new Summary(0, 0, 0, 0);
+
+    final Summary add(Summary s) {
+      return new Summary(
+          req0 + s.req0,
+          amount0 + s.amount0,
+          req1 + s.req1,
+          amount1 + s.amount1
+      );
+    }
+
+    final String json() {
+      return """
+        {"default":{"totalRequests":%d,"totalAmount":%f},"fallback":{"totalRequests":%d,"totalAmount":%f}}"""
+          .formatted(req0, amount0 / 100d, req1, amount1 / 100d);
+    }
+  }
+
+  private class SummaryTask implements Callable<Summary> {
+
+    private final SocketAddress backAddress;
+
+    private final ByteBuffer buffer;
+
+    private final long time0;
+
+    private final long time1;
+
+    SummaryTask(SocketAddress backAddress, ByteBuffer buffer, long time0, long time1) {
+      this.backAddress = backAddress;
+
+      this.buffer = buffer;
+
+      this.time0 = time0;
+
+      this.time1 = time1;
+    }
+
+    @Override
+    public final Summary call() throws Exception {
+      // assemble request
+      buffer.put(OP_SUMMARY);
+
+      buffer.putLong(time0);
+
+      buffer.putLong(time1);
+
+      buffer.flip();
+
+      int bytesRead;
+      bytesRead = 0;
+
+      try (SocketChannel back = adapter.socketChannel()) {
+        back.connect(backAddress);
+
+        // send request
+        while (buffer.hasRemaining()) {
+          back.write(buffer);
+        }
+
         buffer.clear();
 
-        buffer.put(RESP_500);
+        // read response
+        bytesRead = back.read(buffer);
+      }
 
+      if (bytesRead > 0) {
         buffer.flip();
+
+        return new Summary(
+            buffer.getInt(),
+            buffer.getInt(),
+            buffer.getInt(),
+            buffer.getInt()
+        );
+      } else {
+        return Summary.ERROR;
       }
     }
 
-    private void summary() {
-      // find '='
-      int off;
-      off = 0;
+  }
 
-      for (int idx = buffer.position(), max = buffer.limit(); idx < max; idx++) {
-        final byte b;
-        b = buffer.get(idx);
+  private void taskSummary(ByteBuffer buffer) {
+    // find '='
+    int off;
+    off = 0;
 
-        if (b == '=') {
-          off = idx;
+    for (int idx = buffer.position(), max = buffer.limit(); idx < max; idx++) {
+      final byte b;
+      b = buffer.get(idx);
 
-          break;
-        }
+      if (b == '=') {
+        off = idx;
+
+        break;
       }
+    }
 
-      // from time
-      final long time0;
+    // from time
+    final long time0;
 
-      // to time
-      final long time1;
+    // to time
+    final long time1;
 
-      if (off != 0) {
-        // skip '='
-        off += 1;
+    if (off != 0) {
+      // skip '='
+      off += 1;
 
-        time0 = summaryTime(off);
+      time0 = summaryTime(buffer, off);
 
-        // skip iso time
-        off += 24;
+      // skip iso time
+      off += 24;
 
-        // skip '&to='
-        off += 4;
+      // skip '&to='
+      off += 4;
 
-        time1 = summaryTime(off);
-      } else {
-        time0 = 0L;
+      time1 = summaryTime(buffer, off);
+    } else {
+      time0 = 0L;
 
-        time1 = Long.MAX_VALUE;
-      }
+      time1 = Long.MAX_VALUE;
+    }
 
-      buffer.clear();
+    buffer.clear();
 
-      final int half;
-      half = buffer.capacity() / 2;
+    final int half;
+    half = buffer.capacity() / 2;
 
-      final ByteBuffer buffer0;
-      buffer0 = buffer.slice(0, half);
+    final ByteBuffer buffer0;
+    buffer0 = buffer.slice(0, half);
 
-      final ByteBuffer buffer1;
-      buffer1 = buffer.slice(half, half);
+    final ByteBuffer buffer1;
+    buffer1 = buffer.slice(half, half);
 
-      final SummaryTask summary0;
-      summary0 = new SummaryTask(back0, buffer0, time0, time1);
+    final SummaryTask summary0;
+    summary0 = new SummaryTask(back0, buffer0, time0, time1);
 
-      final SummaryTask summary1;
-      summary1 = new SummaryTask(back1, buffer1, time0, time1);
+    final SummaryTask summary1;
+    summary1 = new SummaryTask(back1, buffer1, time0, time1);
 
-      Summary result;
-      result = Summary.ERROR;
+    Summary result;
+    result = Summary.ERROR;
 
-      try (var scope = new StructuredTaskScope.ShutdownOnFailure("summary", taskFactory)) {
-        final Subtask<Summary> task0;
-        task0 = scope.fork(summary0);
+    try (var scope = new StructuredTaskScope.ShutdownOnFailure("summary", taskFactory)) {
+      final Subtask<Summary> task0;
+      task0 = scope.fork(summary0);
 
-        final Subtask<Summary> task1;
-        task1 = scope.fork(summary1);
+      final Subtask<Summary> task1;
+      task1 = scope.fork(summary1);
 
-        scope.join();
+      scope.join();
 
-        scope.throwIfFailed();
+      scope.throwIfFailed();
 
-        final Summary res0;
-        res0 = task0.get();
+      final Summary res0;
+      res0 = task0.get();
 
-        final Summary res1;
-        res1 = task1.get();
+      final Summary res1;
+      res1 = task1.get();
 
-        result = res0.add(res1);
-      } catch (ExecutionException e) {
-        log("Failed to execute summary", e);
-      } catch (InterruptedException e) {
-        log("Interrupted while running summary", e);
-      }
+      result = res0.add(res1);
+    } catch (ExecutionException e) {
+      log("Failed to execute summary", e);
+    } catch (InterruptedException e) {
+      log("Interrupted while running summary", e);
+    }
 
-      final String json;
-      json = result.json();
+    final String json;
+    json = result.json();
 
-      final String resp = """
+    final String resp = """
       HTTP/1.1 200 OK\r
       Content-Type: application/json\r
       Content-Length: %d\r
       \r
       %s""".formatted(json.length(), json);
 
-      final byte[] bytes;
-      bytes = resp.getBytes(StandardCharsets.US_ASCII);
+    final byte[] bytes;
+    bytes = resp.getBytes(StandardCharsets.US_ASCII);
 
-      buffer.clear();
+    buffer.clear();
 
-      buffer.put(bytes);
+    buffer.put(bytes);
 
-      buffer.flip();
-    }
-
-    private long summaryTime(int off) {
-      final byte[] bytes;
-      bytes = new byte[24];
-
-      buffer.get(off, bytes);
-
-      final String s;
-      s = new String(bytes, StandardCharsets.US_ASCII);
-
-      final Instant instant;
-      instant = Instant.parse(s);
-
-      return instant.toEpochMilli();
-    }
-
-    private record Summary(int req0, int amount0, int req1, int amount1) {
-      static final Summary ERROR = new Summary(0, 0, 0, 0);
-
-      final Summary add(Summary s) {
-        return new Summary(
-            req0 + s.req0,
-            amount0 + s.amount0,
-            req1 + s.req1,
-            amount1 + s.amount1
-        );
-      }
-
-      final String json() {
-        return """
-        {"default":{"totalRequests":%d,"totalAmount":%f},"fallback":{"totalRequests":%d,"totalAmount":%f}}"""
-            .formatted(req0, amount0 / 100d, req1, amount1 / 100d);
-      }
-    }
-
-    private class SummaryTask implements Callable<Summary> {
-
-      private final SocketAddress backAddress;
-
-      private final ByteBuffer buffer;
-
-      private final long time0;
-
-      private final long time1;
-
-      SummaryTask(SocketAddress backAddress, ByteBuffer buffer, long time0, long time1) {
-        this.backAddress = backAddress;
-
-        this.buffer = buffer;
-
-        this.time0 = time0;
-
-        this.time1 = time1;
-      }
-
-      @Override
-      public final Summary call() throws Exception {
-        // assemble request
-        buffer.put(OP_SUMMARY);
-
-        buffer.putLong(time0);
-
-        buffer.putLong(time1);
-
-        buffer.flip();
-
-        int bytesRead;
-        bytesRead = 0;
-
-        try (SocketChannel back = adapter.socketChannel()) {
-          back.connect(backAddress);
-
-          // send request
-          while (buffer.hasRemaining()) {
-            back.write(buffer);
-          }
-
-          buffer.clear();
-
-          // read response
-          bytesRead = back.read(buffer);
-        }
-
-        if (bytesRead > 0) {
-          buffer.flip();
-
-          return new Summary(
-              buffer.getInt(),
-              buffer.getInt(),
-              buffer.getInt(),
-              buffer.getInt()
-          );
-        } else {
-          return Summary.ERROR;
-        }
-      }
-
-    }
-
-    private void unknown() {
-      buffer.clear();
-
-      buffer.put(OP_UNKNOWN);
-
-      buffer.flip();
-
-      // choose backend
-      final SocketAddress backAddress;
-      backAddress = nextBackAddress();
-
-      try (SocketChannel back = adapter.socketChannel()) {
-        back.connect(backAddress);
-
-        while (buffer.hasRemaining()) {
-          back.write(buffer);
-        }
-
-        buffer.clear();
-
-        back.read(buffer);
-      } catch (IOException e) {
-        log("Backend I/O error", e);
-      }
-
-      buffer.flip();
-    }
-
+    buffer.flip();
   }
+
+  private long summaryTime(ByteBuffer buffer, int off) {
+    final byte[] bytes;
+    bytes = new byte[24];
+
+    buffer.get(off, bytes);
+
+    final String s;
+    s = new String(bytes, StandardCharsets.US_ASCII);
+
+    final Instant instant;
+    instant = Instant.parse(s);
+
+    return instant.toEpochMilli();
+  }
+
+  // ##################################################################
+  // # END: Task: Summary
+  // ##################################################################
+
+  // ##################################################################
+  // # BEGIN: Task: Unknown
+  // ##################################################################
+
+  private void taskUnknown(ByteBuffer buffer) {
+    buffer.clear();
+
+    buffer.put(OP_UNKNOWN);
+
+    buffer.flip();
+
+    // choose backend
+    final SocketAddress backAddress;
+    backAddress = taskBackAddress();
+
+    try (SocketChannel back = adapter.socketChannel()) {
+      back.connect(backAddress);
+
+      while (buffer.hasRemaining()) {
+        back.write(buffer);
+      }
+
+      buffer.clear();
+
+      back.read(buffer);
+    } catch (IOException e) {
+      log("Backend I/O error", e);
+    }
+
+    buffer.flip();
+  }
+
+  // ##################################################################
+  // # END: Task: Unknown
+  // ##################################################################
 
   // ##################################################################
   // # END: Task

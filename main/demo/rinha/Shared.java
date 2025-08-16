@@ -18,9 +18,8 @@ package demo.rinha;
 import java.io.IOException;
 import java.net.Inet4Address;
 import java.net.InetAddress;
-import java.net.InetSocketAddress;
 import java.net.NetworkInterface;
-import java.net.ServerSocket;
+import java.net.SocketAddress;
 import java.nio.ByteBuffer;
 import java.nio.channels.ServerSocketChannel;
 import java.nio.charset.StandardCharsets;
@@ -129,6 +128,24 @@ sealed abstract class Shared permits Back, Front {
     return new String(bytes, StandardCharsets.US_ASCII);
   }
 
+  static String dump(ServerSocketChannel channel) {
+    try {
+      if (channel != null) {
+        final SocketAddress la;
+        la = channel.getLocalAddress();
+
+        final boolean open;
+        open = channel.isOpen();
+
+        return "ServerSocketChannel[localAddress=%s,open=%s]".formatted(la, open);
+      } else {
+        return "null";
+      }
+    } catch (IOException e) {
+      return e.getMessage();
+    }
+  }
+
   static void log(String message) {
     System.out.println(message);
   }
@@ -156,44 +173,6 @@ sealed abstract class Shared permits Back, Front {
   // ##################################################################
   // # BEGIN: ServerSocket
   // ##################################################################
-
-  final ServerSocket serverSocket(int port) {
-    try {
-      final ServerSocket socket;
-      socket = new ServerSocket();
-
-      final InetAddress address;
-      address = myIpv4Address();
-
-      final InetSocketAddress socketAddress;
-      socketAddress = new InetSocketAddress(address, port);
-
-      socket.bind(socketAddress);
-
-      return socket;
-    } catch (IOException e) {
-      throw new RuntimeException("ServerSocket", e);
-    }
-  }
-
-  final ServerSocketChannel serverSocketChannel(int port) {
-    try {
-      final ServerSocketChannel channel;
-      channel = ServerSocketChannel.open();
-
-      final InetAddress address;
-      address = myIpv4Address();
-
-      final InetSocketAddress socketAddress;
-      socketAddress = new InetSocketAddress(address, port);
-
-      channel.bind(socketAddress);
-
-      return channel;
-    } catch (IOException e) {
-      throw new RuntimeException("ServerSocket", e);
-    }
-  }
 
   static InetAddress myIpv4Address() throws IOException {
     final Enumeration<NetworkInterface> ifaces;
