@@ -42,7 +42,7 @@ import java.util.function.Consumer;
 public final class Front extends Shared {
 
   private static final int BUFFER_SIZE = 224;
-  private static final int POOL_SIZE = 2048;
+  private static final int POOL_SIZE = 1024;
 
   /// Testing Adapter
   static class Adapter {

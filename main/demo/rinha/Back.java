@@ -325,14 +325,14 @@ public final class Back extends Shared {
     public final void run() {
       try {
         task(this);
-      } catch (IOException e) {
+      } catch (Exception e) {
         throw new TaskException(buffer, e);
       }
     }
 
   }
 
-  private void task(Task task) throws IOException {
+  private void task(Task task) throws Exception {
     final ByteBuffer buffer;
     buffer = task.buffer;
 
@@ -351,7 +351,7 @@ public final class Back extends Shared {
     }
   }
 
-  private void task(ByteBuffer buffer, SocketChannel front) throws IOException {
+  private void task(ByteBuffer buffer, SocketChannel front) throws Exception {
     final int limit;
 
     try (front) {
@@ -473,7 +473,7 @@ public final class Back extends Shared {
   private static final long PAYMENT_RESP_400 = asciiLong(" 400 Bad");
   private static final long PAYMENT_RESP_500 = asciiLong(" 500 Int");
 
-  private void taskPaymentProcess(ByteBuffer buffer) throws IOException {
+  private void taskPaymentProcess(ByteBuffer buffer) throws Exception {
     final long time;
     time = buffer.getLong();
 
@@ -484,6 +484,49 @@ public final class Back extends Shared {
     amount = buffer.getInt();
 
     while (true) {
+      //
+      // assemble request
+      //
+
+      buffer.clear();
+
+      buffer.put(PAYMENT_REQ);
+
+      // write content-length value
+      int value;
+      value = json.length;
+
+      int divisor;
+      divisor = 1;
+
+      while (value >= 10) {
+        value /= 10;
+
+        divisor *= 10;
+      }
+
+      value = json.length;
+
+      while (divisor >= 1) {
+        final int digit;
+        digit = value / divisor;
+
+        final int c;
+        c = '0' + digit;
+
+        buffer.put((byte) c);
+
+        value %= divisor;
+
+        divisor /= 10;
+      }
+
+      buffer.put(CRLFCRLF);
+
+      buffer.put(json);
+
+      buffer.flip();
+
       // always use the default processor
       final SocketAddress procAddres;
       procAddres = proc0;
@@ -494,46 +537,6 @@ public final class Back extends Shared {
 
       try (SocketChannel processor = adapter.socketChannel()) {
         processor.connect(procAddres);
-
-        // send request
-        buffer.clear();
-
-        buffer.put(PAYMENT_REQ);
-
-        // write content-length value
-        int value;
-        value = json.length;
-
-        int divisor;
-        divisor = 1;
-
-        while (value >= 10) {
-          value /= 10;
-
-          divisor *= 10;
-        }
-
-        value = json.length;
-
-        while (divisor >= 1) {
-          final int digit;
-          digit = value / divisor;
-
-          final int c;
-          c = '0' + digit;
-
-          buffer.put((byte) c);
-
-          value %= divisor;
-
-          divisor /= 10;
-        }
-
-        buffer.put(CRLFCRLF);
-
-        buffer.put(json);
-
-        buffer.flip();
 
         while (buffer.hasRemaining()) {
           processor.write(buffer);
