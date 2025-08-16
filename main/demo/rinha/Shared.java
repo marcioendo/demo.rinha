@@ -271,6 +271,12 @@ sealed abstract class Shared permits Back, Front {
 
     private final ByteBuffer buffer;
 
+    TaskException(ByteBuffer buffer, String message) {
+      super(message);
+
+      this.buffer = buffer;
+    }
+
     TaskException(ByteBuffer buffer, Throwable cause) {
       super(cause);
 

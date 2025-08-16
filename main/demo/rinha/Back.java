@@ -100,6 +100,8 @@ public final class Back extends Shared {
 
   }
 
+  private volatile boolean active = true;
+
   private final Adapter adapter;
 
   private final Deque<ByteBuffer> bufferPool = bufferPool(BUFFER_SIZE, POOL_SIZE);
@@ -255,15 +257,23 @@ public final class Back extends Shared {
   // ##################################################################
 
   private void server() {
-    while (true) { // we don't need to be interruptible
+    while (active) {
       final Runnable task;
       task = serverListen();
 
       final Thread thread;
       thread = taskFactory.newThread(task);
 
+      thread.setUncaughtExceptionHandler(this::serverExceptionHandler);
+
       thread.start();
     }
+  }
+
+  private void serverExceptionHandler(Thread t, Throwable e) {
+    e.printStackTrace(System.out);
+
+    active = false;
   }
 
   private Runnable serverListen() {
@@ -313,12 +323,16 @@ public final class Back extends Shared {
 
     @Override
     public final void run() {
-      task(this);
+      try {
+        task(this);
+      } catch (IOException e) {
+        throw new TaskException(buffer, e);
+      }
     }
 
   }
 
-  private void task(Task task) {
+  private void task(Task task) throws IOException {
     final ByteBuffer buffer;
     buffer = task.buffer;
 
@@ -337,15 +351,11 @@ public final class Back extends Shared {
     }
   }
 
-  private void task(ByteBuffer buffer, SocketChannel front) {
+  private void task(ByteBuffer buffer, SocketChannel front) throws IOException {
     final int limit;
 
     try (front) {
       limit = taskRoute(buffer, front);
-    } catch (IOException e) {
-      log("Front I/O error", e);
-
-      return;
     }
 
     if (limit > 0) {
@@ -463,7 +473,7 @@ public final class Back extends Shared {
   private static final long PAYMENT_RESP_400 = asciiLong(" 400 Bad");
   private static final long PAYMENT_RESP_500 = asciiLong(" 500 Int");
 
-  private void taskPaymentProcess(ByteBuffer buffer) {
+  private void taskPaymentProcess(ByteBuffer buffer) throws IOException {
     final long time;
     time = buffer.getLong();
 
@@ -477,9 +487,6 @@ public final class Back extends Shared {
       // always use the default processor
       final SocketAddress procAddres;
       procAddres = proc0;
-
-      int bytesRead;
-      bytesRead = 0;
 
       // before talking to the processor, obtain a permit
       // this is required to prevent ddosing the payment processor
@@ -538,59 +545,40 @@ public final class Back extends Shared {
         // be optimistic:
         // let's assume the WHOLE request
         // will be read in a single read operation
-        bytesRead = processor.read(buffer);
-      } catch (IOException e) {
-        log("Processor I/O error, cancelling task", e);
-
-        bytesRead = -1;
+        processor.read(buffer);
       } finally {
         // we've done talking to the processor, release the permit
         permitRelease();
       }
 
-      // process the response (if any)
-      if (bytesRead > 0) {
-        buffer.flip();
+      // process the response
+      buffer.flip();
 
-        final long long0;
-        long0 = buffer.getLong();
+      final long long0;
+      long0 = buffer.getLong();
 
-        if (long0 != PAYMENT_RESP) {
-          log("Unexpected payment processor response");
+      if (long0 != PAYMENT_RESP) {
+        throw new TaskException(buffer, "Unexpected payment processor response");
+      }
 
-          // fail...
-          break;
-        }
+      final long long1;
+      long1 = buffer.getLong();
 
-        final long long1;
-        long1 = buffer.getLong();
+      if (long1 == PAYMENT_RESP_200) {
+        paymentOk(time, amount);
 
-        if (long1 == PAYMENT_RESP_200) {
-          paymentOk(time, amount);
-
-          // our work is done
-          return;
-        }
-
-        else if (long1 == PAYMENT_RESP_400 || long1 == PAYMENT_RESP_500) {
-          paymentRetry();
-        }
-
-        else {
-          buffer.rewind();
-
-          log("Unexpected payment response", buffer);
-
-          throw new UnsupportedOperationException("Implement me :: unexpected payment response");
-        }
-      } else {
-        log("No data, cancelling task");
-
+        // our work is done
         return;
       }
-    }
 
-    log("No result!");
+      else if (long1 == PAYMENT_RESP_400 || long1 == PAYMENT_RESP_500) {
+        paymentRetry();
+      }
+
+      else {
+        throw new TaskException(buffer, "Unexpected payment processor response");
+      }
+    }
   }
 
   private static final int PAYMENT_REQ_TRAILER_LEN = "\"requestedAt\":\"2025-07-15T12:34:56.000Z\"}".length();
