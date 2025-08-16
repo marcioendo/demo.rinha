@@ -156,7 +156,7 @@ public final class Back extends Shared {
     back = Back.boot(adapter, args);
 
     if (back != null) {
-      back.execute();
+      back.server();
     }
   }
 
@@ -259,16 +259,16 @@ public final class Back extends Shared {
   // ##################################################################
 
   // ##################################################################
-  // # BEGIN: Main
+  // # BEGIN: Server
   // ##################################################################
 
-  private void execute() {
+  private void server() {
     while (true) { // we don't need to be interruptible
-      executeOne();
+      serverListen();
     }
   }
 
-  private Thread executeOne() {
+  private Thread serverListen() {
     final SocketChannel front;
 
     try {
@@ -302,7 +302,7 @@ public final class Back extends Shared {
   }
 
   // ##################################################################
-  // # END: Main
+  // # END: Server
   // ##################################################################
 
   // ##################################################################
@@ -778,7 +778,7 @@ public final class Back extends Shared {
 
   final String _exec() {
     final Thread thread;
-    thread = executeOne();
+    thread = serverListen();
 
     if (thread != null) {
       try {
@@ -793,7 +793,7 @@ public final class Back extends Shared {
 
   final String _payment() {
     final Thread thread;
-    thread = executeOne();
+    thread = serverListen();
 
     if (thread != null) {
       final int before;

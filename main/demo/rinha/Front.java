@@ -115,7 +115,7 @@ public final class Front extends Shared {
     front = boot(adapter, args);
 
     if (front != null) {
-      front.execute();
+      front.server();
     }
   }
 
@@ -178,16 +178,16 @@ public final class Front extends Shared {
   // ##################################################################
 
   // ##################################################################
-  // # BEGIN: Main
+  // # BEGIN: Server
   // ##################################################################
 
-  private void execute() {
+  private void server() {
     while (true) { // we don't need to be interruptible
-      executeOne();
+      serverListen();
     }
   }
 
-  final Thread executeOne() {
+  final Thread serverListen() {
     final SocketChannel client;
 
     try {
@@ -231,7 +231,7 @@ public final class Front extends Shared {
   }
 
   // ##################################################################
-  // # END: Main
+  // # END: Server
   // ##################################################################
 
   // ##################################################################
@@ -717,7 +717,7 @@ public final class Front extends Shared {
 
   final String _exec() {
     final Thread thread;
-    thread = executeOne();
+    thread = serverListen();
 
     if (thread != null) {
       try {
