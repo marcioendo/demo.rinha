@@ -109,7 +109,6 @@ NATIVE_IMAGEX += -march=x86-64-v3
 ifeq ($(ENABLE_PREVIEW),1)
 NATIVE_IMAGEX += --enable-preview
 endif
-NATIVE_IMAGEX += --gc=epsilon 
 NATIVE_IMAGEX += --install-exit-handlers
 NATIVE_IMAGEX += --module-path $(CLASS_OUTPUT)
 
