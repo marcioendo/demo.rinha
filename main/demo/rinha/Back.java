@@ -380,7 +380,7 @@ public final class Back extends Shared {
   // ##################################################################
 
   @Override
-  final void failed() {
+  final void dump() {
     System.out.print("""
     Back
     -     channel: %s

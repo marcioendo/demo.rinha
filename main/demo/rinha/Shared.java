@@ -33,7 +33,6 @@ import java.util.ArrayList;
 import java.util.Deque;
 import java.util.Enumeration;
 import java.util.List;
-import java.util.concurrent.StructuredTaskScope;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
@@ -69,15 +68,15 @@ sealed abstract class Shared permits Back, Front {
   \r
   """);
 
-  private volatile boolean active = true;
+  volatile boolean active = true;
 
-  private final Deque<ByteBuffer> bufferPool;
+  final Deque<ByteBuffer> bufferPool;
 
-  private final ServerSocketChannel channel;
+  final ServerSocketChannel channel;
 
   final Lock lock = new ReentrantLock();
 
-  private final ThreadFactory taskFactory;
+  final ThreadFactory taskFactory;
 
   Shared(ServerSocketChannel channel, ThreadFactory taskFactory) {
     this.bufferPool = bufferPool();
@@ -120,10 +119,6 @@ sealed abstract class Shared permits Back, Front {
     }
   }
 
-  final void bufferPoolOpaque(ByteBuffer buffer) {
-    bufferPool.addLast(buffer);
-  }
-
   // ##################################################################
   // # END: Buffer Pool
   // ##################################################################
@@ -132,27 +127,16 @@ sealed abstract class Shared permits Back, Front {
   // # BEGIN: Server
   // ##################################################################
 
-  private long lastCheck;
-
   final void execute() {
     try {
       while (active) {
-        final long now;
-        now = System.currentTimeMillis();
-
-        if ((now - lastCheck) > 5_000) {
-          failed();
-
-          lastCheck = now;
-        }
-
         executeOne();
       }
     } catch (Throwable e) {
       e.printStackTrace(System.out);
     }
 
-    failed();
+    dump();
   }
 
   // returns Thread to ease testing
@@ -265,18 +249,6 @@ sealed abstract class Shared permits Back, Front {
 
   }
 
-  final StructuredTaskScope.ShutdownOnFailure newShutdownOnFailure(String name) {
-    return new StructuredTaskScope.ShutdownOnFailure(name, taskFactory);
-  }
-
-  abstract SocketChannel socketChannel() throws IOException;
-
-  abstract Runnable task(ByteBuffer buffer, SocketChannel client);
-
-  // ##################################################################
-  // # END: Task support
-  // ##################################################################
-
   static byte[] asciiBytes(String s) {
     return s.getBytes(StandardCharsets.US_ASCII);
   }
@@ -300,13 +272,21 @@ sealed abstract class Shared permits Back, Front {
         | Byte.toUnsignedLong(ascii[7]) << 0;
   }
 
+  abstract SocketChannel socketChannel() throws IOException;
+
+  abstract Runnable task(ByteBuffer buffer, SocketChannel client);
+
+  // ##################################################################
+  // # END: Task support
+  // ##################################################################
+
   // ##################################################################
   // # BEGIN: Log
   // ##################################################################
 
-  abstract void failed();
+  abstract void dump();
 
-  static String debug(ByteBuffer buf) {
+  static String dumpByteBuffer(ByteBuffer buf) {
     buf.mark();
 
     final byte[] bytes;
@@ -355,7 +335,7 @@ sealed abstract class Shared permits Back, Front {
   static void log(String message, ByteBuffer buf) {
     System.out.println(message);
 
-    log(debug(buf));
+    log(dumpByteBuffer(buf));
   }
 
   static void log(String message, Throwable t) {

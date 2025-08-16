@@ -33,16 +33,12 @@ final class FrontTask implements Runnable {
 
   private final Front front;
 
-  private final int trx;
-
-  FrontTask(ByteBuffer buffer, SocketChannel client, Front front, int trx) {
+  FrontTask(ByteBuffer buffer, SocketChannel client, Front front) {
     this.buffer = buffer;
 
     this.client = client;
 
     this.front = front;
-
-    this.trx = trx;
   }
 
   private static final long ROUTE_POST_PAYMENTS = Shared.asciiLong("POST /pa");
@@ -53,9 +49,6 @@ final class FrontTask implements Runnable {
 
   @Override
   public final void run() {
-    byte op;
-    op = Shared.OP_UNKNOWN;
-
     try (client) {
       // read the request
       final int clientRead;
@@ -72,20 +65,14 @@ final class FrontTask implements Runnable {
       first = buffer.getLong();
 
       if (first == ROUTE_POST_PAYMENTS) {
-        op = Shared.OP_PAYMENTS;
-
         payment();
       }
 
       else if (first == ROUTE_GET_SUMMARY) {
-        op = Shared.OP_SUMMARY;
-
         summary();
       }
 
       else if (first == ROUTE_POST_PURGE) {
-        op = Shared.OP_PURGE;
-
         purge();
       }
 
@@ -104,13 +91,13 @@ final class FrontTask implements Runnable {
     } catch (Throwable e) {
       throw new Shared.TaskException(this, buffer, e);
     } finally {
-      front.taskEnd(buffer, trx, op);
+      front.bufferPool(buffer);
     }
   }
 
   @Override
   public final String toString() {
-    return "FrontTask[trx=%d]".formatted(trx);
+    return "FrontTask[]";
   }
 
   class PurgeTask implements Callable<Boolean> {

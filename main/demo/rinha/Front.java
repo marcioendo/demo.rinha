@@ -28,6 +28,7 @@ import java.nio.ByteBuffer;
 import java.nio.channels.ServerSocketChannel;
 import java.nio.channels.SocketChannel;
 import java.util.NoSuchElementException;
+import java.util.concurrent.StructuredTaskScope;
 import java.util.concurrent.ThreadFactory;
 import java.util.function.Consumer;
 
@@ -75,10 +76,6 @@ public final class Front extends Shared {
   private final SocketAddress back1;
 
   private volatile int backRound;
-
-  private final byte[] trxs = new byte[17_000];
-
-  private int trxsIndex;
 
   private Front(
       Adapter adapter,
@@ -181,6 +178,10 @@ public final class Front extends Shared {
     return adapter.currentTimeMillis();
   }
 
+  final StructuredTaskScope.ShutdownOnFailure newShutdownOnFailure(String name) {
+    return new StructuredTaskScope.ShutdownOnFailure(name, taskFactory);
+  }
+
   final SocketAddress nextBackAddress() {
     final int round;
     round = (int) BACK_ROUND.getAndAdd(this, 1);
@@ -198,21 +199,7 @@ public final class Front extends Shared {
 
   @Override
   final Runnable task(ByteBuffer buffer, SocketChannel channel) {
-    final int trx;
-    trx = trxsIndex++;
-
-    return new FrontTask(buffer, channel, this, trx);
-  }
-
-  final void taskEnd(ByteBuffer buffer, int idx, byte op) {
-    lock.lock();
-    try {
-      bufferPoolOpaque(buffer);
-
-      trxs[idx] = op;
-    } finally {
-      lock.unlock();
-    }
+    return new FrontTask(buffer, channel, this);
   }
 
   // ##################################################################
@@ -224,40 +211,18 @@ public final class Front extends Shared {
   // ##################################################################
 
   @Override
-  final void failed() {
-    int purge = 0, payment = 0, summary = 0, unknown = 0;
-
-    lock.lock();
-    try {
-      for (int idx = 0; idx < trxsIndex; idx++) {
-        switch (trxs[idx]) {
-          case OP_PURGE -> purge += 1;
-          case OP_PAYMENTS -> payment += 1;
-          case OP_SUMMARY -> summary += 1;
-          default -> unknown += 1;
-        }
-      }
-    } finally {
-      lock.unlock();
-    }
-
+  final void dump() {
     System.out.print("""
     Front
     -   channel: %s
     -     back0: %s
     -     back1: %s
     - backRound: %d
-    -      trxs: %d [purge=%d,payment=%d,summary=%d,unknown=%d]
     """.formatted(
         dumpChannel(),
         dumpSocketAddress(back0),
         dumpSocketAddress(back1),
-        backRound,
-        trxsIndex,
-        purge,
-        payment,
-        summary,
-        unknown
+        backRound
     ));
   }
 
