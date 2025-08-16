@@ -234,7 +234,7 @@ final class Y {
     }
 
     @Override
-    final SocketChannel socketChannel() throws IOException {
+    final synchronized SocketChannel socketChannel() throws IOException {
       if (socketChannelsIndex < socketChannels.size()) {
         return socketChannels.get(socketChannelsIndex++);
       } else {

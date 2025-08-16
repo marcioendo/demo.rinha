@@ -16,6 +16,7 @@
 package demo.rinha;
 
 import java.io.IOException;
+import java.io.PrintStream;
 import java.net.Inet4Address;
 import java.net.InetAddress;
 import java.net.NetworkInterface;
@@ -259,6 +260,45 @@ sealed abstract class Shared permits Back, Front {
 
   // ##################################################################
   // # END: ShutdownHook
+  // ##################################################################
+
+  // ##################################################################
+  // # BEGIN: Task
+  // ##################################################################
+
+  @SuppressWarnings("serial")
+  static final class TaskException extends RuntimeException {
+
+    private final ByteBuffer buffer;
+
+    TaskException(ByteBuffer buffer, Throwable cause) {
+      super(cause);
+
+      this.buffer = buffer;
+    }
+
+    @Override
+    public final void printStackTrace(PrintStream s) {
+      super.printStackTrace(s);
+
+      final int limit;
+      limit = buffer.limit();
+
+      final byte[] bytes;
+      bytes = new byte[limit];
+
+      buffer.get(0, bytes);
+
+      final String buf;
+      buf = new String(bytes, StandardCharsets.US_ASCII);
+
+      s.println(buf);
+    }
+
+  }
+
+  // ##################################################################
+  // # END: Task
   // ##################################################################
 
 }

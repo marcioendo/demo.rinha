@@ -256,7 +256,8 @@ public final class Back extends Shared {
 
   private void server() {
     while (true) { // we don't need to be interruptible
-      final Runnable task = serverListen();
+      final Runnable task;
+      task = serverListen();
 
       final Thread thread;
       thread = taskFactory.newThread(task);

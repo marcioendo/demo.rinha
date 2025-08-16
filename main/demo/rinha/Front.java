@@ -78,6 +78,8 @@ public final class Front extends Shared {
 
   private static final int PORT = 9999;
 
+  private volatile boolean active = true;
+
   private final Adapter adapter;
 
   private final SocketAddress back0;
@@ -182,15 +184,23 @@ public final class Front extends Shared {
   // ##################################################################
 
   private void server() {
-    while (true) { // we don't need to be interruptible
+    while (active) {
       final Runnable task;
       task = serverListen();
 
       final Thread thread;
       thread = taskFactory.newThread(task);
 
+      thread.setUncaughtExceptionHandler(this::serverExceptionHandler);
+
       thread.start();
     }
+  }
+
+  private void serverExceptionHandler(Thread t, Throwable e) {
+    e.printStackTrace(System.out);
+
+    active = false;
   }
 
   final Runnable serverListen() {
@@ -240,12 +250,16 @@ public final class Front extends Shared {
 
     @Override
     public final void run() {
-      task(this);
+      try {
+        task(this);
+      } catch (Throwable e) {
+        throw new TaskException(buffer, e);
+      }
     }
 
   }
 
-  private void task(Task task) {
+  private void task(Task task) throws Exception {
     final ByteBuffer buffer;
     buffer = task.buffer;
 
@@ -254,8 +268,6 @@ public final class Front extends Shared {
 
     try (client) {
       taskRoute(buffer, client);
-    } catch (IOException e) {
-      log("Client I/O error", e);
     } finally {
       lock.lock();
       try {
@@ -286,7 +298,7 @@ public final class Front extends Shared {
 
   private static final long ROUTE_GET_SUMMARY = asciiLong("GET /pay");
 
-  private void taskRoute(ByteBuffer buffer, SocketChannel client) throws IOException {
+  private void taskRoute(ByteBuffer buffer, SocketChannel client) throws Exception {
     // read the request
     final int clientRead;
     clientRead = client.read(buffer);
@@ -352,9 +364,6 @@ public final class Front extends Shared {
 
       slice.flip();
 
-      int bytesRead;
-      bytesRead = 0;
-
       try (SocketChannel back = adapter.socketChannel()) {
         // send the request
         back.connect(backAddress);
@@ -369,26 +378,20 @@ public final class Front extends Shared {
         // be optimistic:
         // let's assume the WHOLE request
         // will be read in a single read operation
-        bytesRead = back.read(slice);
-      } catch (IOException e) {
-        log("Backend I/O error", e);
+        back.read(slice);
       }
 
-      // process the response (if any)
-      if (bytesRead == 4) {
-        slice.flip();
+      // process the response
+      slice.flip();
 
-        final int trx;
-        trx = slice.getInt();
+      final int trx;
+      trx = slice.getInt();
 
-        return trx == PURGE_200;
-      } else {
-        return Boolean.FALSE;
-      }
+      return trx == PURGE_200;
     }
   }
 
-  private void taskPurge(ByteBuffer buffer) {
+  private void taskPurge(ByteBuffer buffer) throws ExecutionException, InterruptedException {
     final PurgeTask purge0;
     purge0 = new PurgeTask(back0, buffer.slice(0, 4));
 
@@ -415,10 +418,6 @@ public final class Front extends Shared {
       res1 = task1.get();
 
       success = res0 && res1;
-    } catch (ExecutionException e) {
-      log("Failed to execute purge", e);
-    } catch (InterruptedException e) {
-      log("Interrupted while running purge", e);
     }
 
     buffer.clear();
@@ -436,7 +435,7 @@ public final class Front extends Shared {
   // # BEGIN: Task: Payment
   // ##################################################################
 
-  private void taskPayment(ByteBuffer buffer) {
+  private void taskPayment(ByteBuffer buffer) throws IOException {
     // we're assuming the request is exactly:
     //
     // POST /payments HTTP/1.1\r\n
@@ -469,9 +468,6 @@ public final class Front extends Shared {
     final SocketAddress backAddress;
     backAddress = taskBackAddress();
 
-    int bytesRead;
-    bytesRead = 0;
-
     try (SocketChannel back = adapter.socketChannel()) {
       // send the request
       back.connect(backAddress);
@@ -486,22 +482,11 @@ public final class Front extends Shared {
       // be optimistic:
       // let's assume the WHOLE request
       // will be read in a single read operation
-      bytesRead = back.read(buffer);
-    } catch (IOException e) {
-      log("Backend I/O error", e);
+      back.read(buffer);
     }
 
-    // process the response (if any)
-    if (bytesRead > 0) {
-      // forward the response as it is
-      buffer.flip();
-    } else {
-      buffer.clear();
-
-      buffer.put(RESP_500);
-
-      buffer.flip();
-    }
+    // forward the response as it is
+    buffer.flip();
   }
 
   // ##################################################################
@@ -562,9 +547,6 @@ public final class Front extends Shared {
 
       buffer.flip();
 
-      int bytesRead;
-      bytesRead = 0;
-
       try (SocketChannel back = adapter.socketChannel()) {
         back.connect(backAddress);
 
@@ -576,26 +558,22 @@ public final class Front extends Shared {
         buffer.clear();
 
         // read response
-        bytesRead = back.read(buffer);
+        back.read(buffer);
       }
 
-      if (bytesRead > 0) {
-        buffer.flip();
+      buffer.flip();
 
-        return new Summary(
-            buffer.getInt(),
-            buffer.getInt(),
-            buffer.getInt(),
-            buffer.getInt()
-        );
-      } else {
-        return Summary.ERROR;
-      }
+      return new Summary(
+          buffer.getInt(),
+          buffer.getInt(),
+          buffer.getInt(),
+          buffer.getInt()
+      );
     }
 
   }
 
-  private void taskSummary(ByteBuffer buffer) {
+  private void taskSummary(ByteBuffer buffer) throws ExecutionException, InterruptedException {
     // find '='
     int off;
     off = 0;
@@ -674,10 +652,6 @@ public final class Front extends Shared {
       res1 = task1.get();
 
       result = res0.add(res1);
-    } catch (ExecutionException e) {
-      log("Failed to execute summary", e);
-    } catch (InterruptedException e) {
-      log("Interrupted while running summary", e);
     }
 
     final String json;
@@ -723,7 +697,7 @@ public final class Front extends Shared {
   // # BEGIN: Task: Unknown
   // ##################################################################
 
-  private void taskUnknown(ByteBuffer buffer) {
+  private void taskUnknown(ByteBuffer buffer) throws IOException {
     buffer.clear();
 
     buffer.put(OP_UNKNOWN);
@@ -744,8 +718,6 @@ public final class Front extends Shared {
       buffer.clear();
 
       back.read(buffer);
-    } catch (IOException e) {
-      log("Backend I/O error", e);
     }
 
     buffer.flip();
