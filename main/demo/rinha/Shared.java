@@ -25,9 +25,7 @@ import java.nio.ByteBuffer;
 import java.nio.channels.ServerSocketChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
-import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.Deque;
 import java.util.Enumeration;
 import java.util.List;
 import java.util.function.Consumer;
@@ -86,34 +84,6 @@ sealed abstract class Shared permits Back, Front, Pay {
         | Byte.toUnsignedLong(ascii[6]) << 8
         | Byte.toUnsignedLong(ascii[7]) << 0;
   }
-
-  // ##################################################################
-  // # BEGIN: Buffer Pool
-  // ##################################################################
-
-  final Deque<ByteBuffer> bufferPool(int bufferSize, int poolSize) {
-    final ByteBuffer buffer;
-    buffer = ByteBuffer.allocateDirect(bufferSize * poolSize);
-
-    final Deque<ByteBuffer> bufferPool;
-    bufferPool = new ArrayDeque<>(poolSize);
-
-    for (int idx = 0; idx < poolSize; idx++) {
-      final int offset;
-      offset = idx * bufferSize;
-
-      final ByteBuffer slice;
-      slice = buffer.slice(offset, bufferSize);
-
-      bufferPool.addLast(slice);
-    }
-
-    return bufferPool;
-  }
-
-  // ##################################################################
-  // # END: Buffer Pool
-  // ##################################################################
 
   // ##################################################################
   // # BEGIN: Log

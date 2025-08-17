@@ -30,7 +30,6 @@ import java.nio.channels.SocketChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.Instant;
-import java.util.Deque;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ThreadFactory;
 import java.util.function.Consumer;
@@ -39,7 +38,6 @@ import java.util.function.Consumer;
 public final class Front extends Shared {
 
   private static final int BUFFER_SIZE = 224;
-  private static final int POOL_SIZE = 1024;
 
   /// Testing Adapter
   static class Adapter {
@@ -99,8 +97,6 @@ public final class Front extends Shared {
   private final SocketAddress back1;
 
   private volatile int backRound;
-
-  private final Deque<ByteBuffer> bufferPool = bufferPool(BUFFER_SIZE, POOL_SIZE);
 
   private final ServerSocketChannel channel;
 
@@ -232,12 +228,7 @@ public final class Front extends Shared {
     }
 
     final ByteBuffer buffer;
-
-    synchronized (bufferPool) {
-      buffer = bufferPool.removeFirst();
-    }
-
-    buffer.clear();
+    buffer = ByteBuffer.allocate(BUFFER_SIZE);
 
     return new Task(buffer, client);
   }
@@ -268,10 +259,6 @@ public final class Front extends Shared {
         taskRoute(buffer, client);
       } catch (Throwable e) {
         throw new TaskException(buffer, e);
-      } finally {
-        synchronized (bufferPool) {
-          bufferPool.addLast(buffer);
-        }
       }
     }
 

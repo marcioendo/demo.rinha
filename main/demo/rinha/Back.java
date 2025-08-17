@@ -25,7 +25,6 @@ import java.nio.channels.ServerSocketChannel;
 import java.nio.channels.SocketChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Deque;
 import java.util.concurrent.ThreadFactory;
 import java.util.function.Consumer;
 
@@ -33,7 +32,6 @@ import java.util.function.Consumer;
 public final class Back extends Shared {
 
   private static final int BUFFER_SIZE = 192;
-  private static final int POOL_SIZE = 3072;
 
   /// Testing Adapter
   static class Adapter {
@@ -88,8 +86,6 @@ public final class Back extends Shared {
   private volatile boolean active = true;
 
   private final Adapter adapter;
-
-  private final Deque<ByteBuffer> bufferPool = bufferPool(BUFFER_SIZE, POOL_SIZE);
 
   private final ServerSocketChannel channel;
 
@@ -244,12 +240,7 @@ public final class Back extends Shared {
     }
 
     final ByteBuffer buffer;
-
-    synchronized (bufferPool) {
-      buffer = bufferPool.removeFirst();
-    }
-
-    buffer.clear();
+    buffer = ByteBuffer.allocate(BUFFER_SIZE);
 
     return new Task(buffer, front);
   }
@@ -280,10 +271,6 @@ public final class Back extends Shared {
         taskRoute(buffer, front);
       } catch (Exception e) {
         throw new TaskException(buffer, e);
-      } finally {
-        synchronized (bufferPool) {
-          bufferPool.addLast(buffer);
-        }
       }
     }
 

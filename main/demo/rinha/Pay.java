@@ -252,10 +252,6 @@ public final class Pay extends Shared {
 
   private final Adapter adapter;
 
-  private final ByteBuffer[] buffers;
-
-  private int buffersIndex;
-
   private final ServerSocketChannel channel;
 
   private final Proc proc0;
@@ -270,14 +266,11 @@ public final class Pay extends Shared {
 
   private Pay(
       Adapter adapter,
-      ByteBuffer[] buffers,
       ServerSocketChannel channel,
       Proc proc0,
       Proc proc1,
       ThreadFactory taskFactory) {
     this.adapter = adapter;
-
-    this.buffers = buffers;
 
     this.channel = channel;
 
@@ -306,26 +299,6 @@ public final class Pay extends Shared {
 
   static Pay boot(Adapter adapter, String... args) {
     log("Pay");
-
-    //
-    // Buffers
-    //
-
-    final ByteBuffer[] buffers;
-    buffers = new ByteBuffer[MAX_TRXS];
-
-    final ByteBuffer direct;
-    direct = ByteBuffer.allocateDirect(MAX_TRXS * BUFFER_SIZE);
-
-    for (int idx = 0; idx < MAX_TRXS; idx++) {
-      final int offset;
-      offset = idx * BUFFER_SIZE;
-
-      final ByteBuffer buffer;
-      buffer = direct.slice(offset, BUFFER_SIZE);
-
-      buffers[idx] = buffer;
-    }
 
     final Consumer<AutoCloseable> shutdownHook;
     shutdownHook = shutdownHook();
@@ -388,7 +361,7 @@ public final class Pay extends Shared {
     // Pay
     //
 
-    return new Pay(adapter, buffers, channel, proc0, proc1, taskFactory);
+    return new Pay(adapter, channel, proc0, proc1, taskFactory);
   }
 
   // ##################################################################
@@ -430,11 +403,8 @@ public final class Pay extends Shared {
       return null;
     }
 
-    final int idx;
-    idx = buffersIndex++;
-
     final ByteBuffer buffer;
-    buffer = buffers[idx];
+    buffer = ByteBuffer.allocate(BUFFER_SIZE);
 
     return new Task(buffer, remote);
   }
