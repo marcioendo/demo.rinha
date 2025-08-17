@@ -19,10 +19,12 @@ import java.io.IOException;
 import java.io.PrintStream;
 import java.net.Inet4Address;
 import java.net.InetAddress;
+import java.net.InetSocketAddress;
 import java.net.NetworkInterface;
 import java.net.SocketAddress;
 import java.nio.ByteBuffer;
 import java.nio.channels.ServerSocketChannel;
+import java.nio.channels.SocketChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.ArrayDeque;
@@ -174,6 +176,30 @@ sealed abstract class Shared permits Back, Front {
   // ##################################################################
   // # BEGIN: ServerSocket
   // ##################################################################
+
+  static SocketAddress addr(String name, int port) throws IOException {
+    final InetAddress[] all;
+    all = InetAddress.getAllByName(name);
+
+    for (InetAddress addr : all) {
+      final InetSocketAddress maybe;
+      maybe = new InetSocketAddress(addr, port);
+
+      try (SocketChannel ch = SocketChannel.open()) {
+        ch.connect(maybe);
+
+        logf("Connect ok=%s%n", maybe);
+
+        return maybe;
+      } catch (IOException e) {
+        logf("Connect failed=%s%n", maybe);
+
+        continue;
+      }
+    }
+
+    throw new IOException("Failed to find IP address of " + name);
+  }
 
   static InetAddress myIpv4Address() throws IOException {
     final Enumeration<NetworkInterface> ifaces;

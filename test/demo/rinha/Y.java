@@ -17,13 +17,13 @@ package demo.rinha;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
 import java.net.SocketAddress;
-import java.net.UnixDomainSocketAddress;
 import java.nio.ByteBuffer;
 import java.nio.channels.ServerSocketChannel;
 import java.nio.channels.SocketChannel;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -123,7 +123,7 @@ final class Y {
     }
 
     @Override
-    final ServerSocketChannel serverSocketChannel(Path path) throws IOException {
+    final ServerSocketChannel serverSocketChannel() throws IOException {
       return serverSocketChannel;
     }
 
@@ -134,11 +134,6 @@ final class Y {
       } else {
         return null;
       }
-    }
-
-    @Override
-    final void shutdownHook(Path path) {
-      // noop
     }
 
   }
@@ -221,8 +216,19 @@ final class Y {
     }
 
     @Override
-    final SocketAddress back(Path socket) {
-      return UnixDomainSocketAddress.of(socket);
+    final SocketAddress back0() {
+      final InetAddress addr;
+      addr = InetAddress.getLoopbackAddress();
+
+      return new InetSocketAddress(addr, 9990);
+    }
+
+    @Override
+    final SocketAddress back1() {
+      final InetAddress addr;
+      addr = InetAddress.getLoopbackAddress();
+
+      return new InetSocketAddress(addr, 9991);
     }
 
     @Override

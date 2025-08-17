@@ -21,7 +21,7 @@
 ## Coordinates
 GROUP_ID := br.dev.o7.marcio
 ARTIFACT_ID := demo.rinha
-VERSION := 007
+VERSION := 008-SNAPSHOT
 
 ## JDK 24 required
 JAVA_RELEASE := 24
@@ -109,7 +109,7 @@ NATIVE_IMAGEX += -march=x86-64-v3
 ifeq ($(ENABLE_PREVIEW),1)
 NATIVE_IMAGEX += --enable-preview
 endif
-NATIVE_IMAGEX += --gc=epsilon -R:MaximumHeapSizePercent=85
+NATIVE_IMAGEX += --gc=serial -R:MaximumHeapSizePercent=85
 NATIVE_IMAGEX += --install-exit-handlers
 NATIVE_IMAGEX += --module-path $(CLASS_OUTPUT)
 
@@ -362,13 +362,12 @@ define COMPOSE_CONTENTS =
 services:
   back0:
     image: $(BDOCKER_TAG)
-    command: ["0"]
     container_name: back0
     hostname: back0
     volumes:
       - /tmp:/tmp
     ports:
-      - "9990:9990"
+      - "9990:8080"
       $(if $(ENABLE_DEBUG),- "7090:7000")
     networks:
       - backend
@@ -381,13 +380,12 @@ services:
 
   back1:
     image: $(BDOCKER_TAG)
-    command: ["1"]
     container_name: back1
     hostname: back1
     volumes:
       - /tmp:/tmp
     ports:
-      - "9991:9991"
+      - "9991:8080"
       $(if $(ENABLE_DEBUG),- "7091:7000")
     networks:
       - backend
