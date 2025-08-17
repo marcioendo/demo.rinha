@@ -41,7 +41,7 @@ public final class Pay extends Shared {
 
   private static final int BUFFER_SIZE = 192;
 
-  private static final int MAX_PERMITS = 100;
+  private static final int MAX_PERMITS = 10;
 
   /// Testing Adapter
   static class Adapter {
