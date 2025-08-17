@@ -19,9 +19,13 @@ import java.io.IOException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.SocketAddress;
+import java.net.StandardProtocolFamily;
+import java.net.UnixDomainSocketAddress;
 import java.nio.ByteBuffer;
 import java.nio.channels.ServerSocketChannel;
 import java.nio.channels.SocketChannel;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Instant;
 import java.util.Deque;
 import java.util.concurrent.ThreadFactory;
@@ -50,12 +54,56 @@ public final class Back extends Shared {
       return addr("payment-processor-fallback", 8080);
     }
 
-    ServerSocketChannel serverSocketChannel() throws IOException {
-      return ServerSocketChannel.open();
+    private SocketAddress addr(String name, int port) throws IOException {
+      final InetAddress[] all;
+      all = InetAddress.getAllByName(name);
+
+      for (InetAddress addr : all) {
+        final InetSocketAddress maybe;
+        maybe = new InetSocketAddress(addr, port);
+
+        try (SocketChannel ch = socketChannel()) {
+          ch.connect(maybe);
+
+          logf("Connect ok=%s%n", maybe);
+
+          return maybe;
+        } catch (IOException e) {
+          logf("Connect failed=%s%n", maybe);
+
+          e.printStackTrace(System.out);
+
+          continue;
+        }
+      }
+
+      throw new IOException("Failed to find IP address of " + name);
+    }
+
+    ServerSocketChannel serverSocketChannel(Path path) throws IOException {
+      final ServerSocketChannel channel;
+      channel = ServerSocketChannel.open(StandardProtocolFamily.UNIX);
+
+      Files.deleteIfExists(path);
+
+      final UnixDomainSocketAddress socketAddress;
+      socketAddress = UnixDomainSocketAddress.of(path);
+
+      channel.bind(socketAddress);
+
+      return channel;
     }
 
     SocketChannel socketChannel() throws IOException {
       return SocketChannel.open();
+    }
+
+    void shutdownHook(Path path) {
+      try {
+        Files.deleteIfExists(path);
+      } catch (Throwable e) {
+        e.printStackTrace();
+      }
     }
 
   }
@@ -129,21 +177,47 @@ public final class Back extends Shared {
     shutdownHook = shutdownHook();
 
     //
+    // Args
+    //
+
+    if (args.length != 1) {
+      log("Syntax: back ID");
+
+      return null;
+    }
+
+    int argsIndex;
+    argsIndex = 0;
+
+    // our ID
+    final String id;
+    id = args[argsIndex++];
+
+    final Path socket;
+    socket = switch (id) {
+      case "0" -> BACK0_SOCKET;
+
+      case "1" -> BACK1_SOCKET;
+
+      default -> null;
+    };
+
+    if (socket == null) {
+      log("Valid ID options are: 0 or 1");
+
+      return null;
+    }
+
+    shutdownHook.accept(() -> adapter.shutdownHook(socket));
+
+    //
     // ServerSocketChannel
     //
 
     final ServerSocketChannel channel;
 
     try {
-      channel = adapter.serverSocketChannel();
-
-      final InetAddress address;
-      address = myIpv4Address();
-
-      final InetSocketAddress socketAddress;
-      socketAddress = new InetSocketAddress(address, 8080);
-
-      channel.bind(socketAddress);
+      channel = adapter.serverSocketChannel(socket);
     } catch (IOException e) {
       log("Failed to init ServerSocketChannel", e);
 

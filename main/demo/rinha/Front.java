@@ -16,15 +16,19 @@
 package demo.rinha;
 
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.SocketAddress;
+import java.net.StandardProtocolFamily;
+import java.net.UnixDomainSocketAddress;
 import java.nio.ByteBuffer;
 import java.nio.channels.ServerSocketChannel;
 import java.nio.channels.SocketChannel;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
 import java.time.Instant;
 import java.util.Deque;
 import java.util.concurrent.Callable;
@@ -45,12 +49,23 @@ public final class Front extends Shared {
   /// Testing Adapter
   static class Adapter {
 
-    SocketAddress back0() throws IOException {
-      return addr("back0", 8080);
-    }
+    SocketAddress back(Path socket) {
+      final SocketAddress back;
+      back = UnixDomainSocketAddress.of(socket);
 
-    SocketAddress back1() throws IOException {
-      return addr("back1", 8080);
+      try {
+        try (SocketChannel ch = socketChannel()) {
+          ch.connect(back);
+
+          logf("Connect ok=%s%n", back);
+        }
+      } catch (IOException e) {
+        log("Failed to init back sockets", e);
+
+        throw new UncheckedIOException(e);
+      }
+
+      return back;
     }
 
     long currentTimeMillis() {
@@ -62,7 +77,7 @@ public final class Front extends Shared {
     }
 
     SocketChannel socketChannel() throws IOException {
-      return SocketChannel.open();
+      return SocketChannel.open(StandardProtocolFamily.UNIX);
     }
 
   }
@@ -166,18 +181,10 @@ public final class Front extends Shared {
     //
 
     final SocketAddress back0;
+    back0 = adapter.back(BACK0_SOCKET);
 
     final SocketAddress back1;
-
-    try {
-      back0 = adapter.back0();
-
-      back1 = adapter.back1();
-    } catch (IOException e) {
-      log("Failed to init back addresses", e);
-
-      return null;
-    }
+    back1 = adapter.back(BACK1_SOCKET);
 
     //
     // task factory

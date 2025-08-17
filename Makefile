@@ -254,7 +254,7 @@ endif
 
 ## *-dockerfile contents
 define $(1)_CONTENTS :=
-FROM debian:bookworm-slim
+FROM ubuntu:24.04
 
 LABEL org.opencontainers.image.source=https://github.com/marcioendo/demo.rinha
 
@@ -362,15 +362,12 @@ define COMPOSE_CONTENTS =
 services:
   back0:
     image: $(BDOCKER_TAG)
+    command: ["0"]
     container_name: back0
     hostname: back0
     volumes:
       - /tmp:/tmp
-    ports:
-      - "9990:8080"
-      $(if $(ENABLE_DEBUG),- "7090:7000")
     networks:
-      - backend
       - payment-processor
     deploy:
       resources:
@@ -380,15 +377,12 @@ services:
 
   back1:
     image: $(BDOCKER_TAG)
+    command: ["1"]
     container_name: back1
     hostname: back1
     volumes:
       - /tmp:/tmp
-    ports:
-      - "9991:8080"
-      $(if $(ENABLE_DEBUG),- "7091:7000")
     networks:
-      - backend
       - payment-processor
     deploy:
       resources:
@@ -407,7 +401,6 @@ services:
       - back1
     ports:
       - "9999:9999"
-      $(if $(ENABLE_DEBUG),- "7099:7000")
     networks:
       - backend
     deploy:
