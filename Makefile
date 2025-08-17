@@ -21,14 +21,10 @@
 ## Coordinates
 GROUP_ID := br.dev.o7.marcio
 ARTIFACT_ID := demo.rinha
-VERSION := 011-SNAPSHOT
+VERSION := 011
 
 ## JDK 24 required
 JAVA_RELEASE := 24
-
-## use native by default
-## use ENABLE_JLINK=1 to override
-ENABLE_NATIVE := 1
 
 ## Test dependencies
 SLF4J_NOP := org.slf4j/slf4j-nop/2.0.17
