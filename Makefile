@@ -21,7 +21,7 @@
 ## Coordinates
 GROUP_ID := br.dev.o7.marcio
 ARTIFACT_ID := demo.rinha
-VERSION := 010-SNAPSHOT
+VERSION := 010
 
 ## JDK 24 required
 JAVA_RELEASE := 24
@@ -42,7 +42,7 @@ TESTNG := org.testng/testng/7.11.0
 #
 
 .PHONY: all
-all: test front-native back-native
+all: test front-native back-native pay-native
 
 include make/java-core.mk
 
