@@ -217,6 +217,18 @@ public final class Back extends Shared {
       proc0 = adapter.proc0();
 
       proc1 = adapter.proc1();
+
+      try (SocketChannel ch = adapter.socketChannel()) {
+        ch.connect(proc0);
+
+        logf("Connect ok=%s%n", proc0);
+      }
+
+      try (SocketChannel ch = adapter.socketChannel()) {
+        ch.connect(proc1);
+
+        logf("Connect ok=%s%n", proc1);
+      }
     } catch (IOException e) {
       log("Failed to init payment processor addresses", e);
 

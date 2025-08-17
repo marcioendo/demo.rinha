@@ -165,6 +165,24 @@ public final class Front extends Shared {
     final SocketAddress back1;
     back1 = UnixDomainSocketAddress.of(BACK1_SOCKET);
 
+    try {
+      try (SocketChannel ch = adapter.socketChannel()) {
+        ch.connect(back0);
+
+        logf("Connect ok=%s%n", back0);
+      }
+
+      try (SocketChannel ch = adapter.socketChannel()) {
+        ch.connect(back0);
+
+        logf("Connect ok=%s%n", back0);
+      }
+    } catch (IOException e) {
+      log("Failed to init back sockets", e);
+
+      return null;
+    }
+
     //
     // task factory
     //
