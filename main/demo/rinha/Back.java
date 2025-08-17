@@ -55,10 +55,27 @@ public final class Back extends Shared {
     }
 
     private SocketAddress addr(String name, int port) throws IOException {
-      final InetAddress address;
-      address = InetAddress.getByName(name);
+      final InetAddress[] all;
+      all = InetAddress.getAllByName(name);
 
-      return new InetSocketAddress(address, port);
+      for (InetAddress addr : all) {
+        final InetSocketAddress maybe;
+        maybe = new InetSocketAddress(addr, port);
+
+        try (SocketChannel ch = socketChannel()) {
+          ch.connect(maybe);
+
+          logf("Connect ok=%s%n", maybe);
+
+          return maybe;
+        } catch (IOException e) {
+          logf("Connect failed=%s%n", maybe);
+
+          continue;
+        }
+      }
+
+      throw new IOException("Failed to find IP address of " + name);
     }
 
     ServerSocketChannel serverSocketChannel(Path path) throws IOException {
@@ -217,18 +234,6 @@ public final class Back extends Shared {
       proc0 = adapter.proc0();
 
       proc1 = adapter.proc1();
-
-      try (SocketChannel ch = adapter.socketChannel()) {
-        ch.connect(proc0);
-
-        logf("Connect ok=%s%n", proc0);
-      }
-
-      try (SocketChannel ch = adapter.socketChannel()) {
-        ch.connect(proc1);
-
-        logf("Connect ok=%s%n", proc1);
-      }
     } catch (IOException e) {
       log("Failed to init payment processor addresses", e);
 

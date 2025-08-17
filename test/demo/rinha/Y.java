@@ -18,6 +18,7 @@ package demo.rinha;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.net.SocketAddress;
+import java.net.UnixDomainSocketAddress;
 import java.nio.ByteBuffer;
 import java.nio.channels.ServerSocketChannel;
 import java.nio.channels.SocketChannel;
@@ -217,6 +218,11 @@ final class Y {
       socketChannels.add(
           Objects.requireNonNull(value, "value == null")
       );
+    }
+
+    @Override
+    final SocketAddress back(Path socket) {
+      return UnixDomainSocketAddress.of(socket);
     }
 
     @Override
