@@ -570,6 +570,7 @@ $(GH_PACKAGE_MARKER): $(COMPOSE)
 	@echo $(GH_PACKAGE_TOKEN) | docker login ghcr.io -u marcioendo --password-stdin
 	docker push $(FDOCKER_TAG)
 	docker push $(BDOCKER_TAG)
+	docker push $(PDOCKER_TAG)
 	docker logout
 	touch $@
 	
