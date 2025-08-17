@@ -21,7 +21,7 @@ import java.nio.channels.ServerSocketChannel;
 import java.nio.channels.SocketChannel;
 import org.testng.annotations.Test;
 
-public class BackTest0Purge {
+public class PayTest0Purge {
 
   @Test(description = "happy path")
   public void testCase01() {
@@ -37,19 +37,22 @@ public class BackTest0Purge {
       opts.socketChannel(front);
     });
 
-    final Back.Adapter adapter;
-    adapter = Y.backAdapter(opts -> {
+    final Pay.Adapter adapter;
+    adapter = Y.payAdapter(opts -> {
       opts.serverSocketChannel(channel);
     });
 
-    final Back back;
-    back = Y.back(adapter);
+    final Pay pay;
+    pay = Y.pay(adapter);
 
-    assertEquals(back._exec(), "Back[trxsIndex=0]");
+    assertEquals(pay._exec(), "Pay[trxsIndex=0]");
 
     assertEquals(
-        Y.socketChannelWrite(front),
-        Y.toByteArray(Shared.PURGE_200)
+        Y.socketChannelWriteAscii(front),
+        """
+        HTTP/1.1 200 OK\r
+        \r
+        """
     );
 
     assertEquals(front.isOpen(), false);

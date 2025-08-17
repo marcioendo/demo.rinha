@@ -32,17 +32,20 @@ import java.util.Enumeration;
 import java.util.List;
 import java.util.function.Consumer;
 
-sealed abstract class Shared permits Back, Front {
+sealed abstract class Shared permits Back, Front, Pay {
+
+  static final int MAX_TRXS = 17_000;
 
   static final Path BACK0_SOCKET = Path.of("/tmp/kag8kie5uDie3lei0toh-back0.sock");
   static final Path BACK1_SOCKET = Path.of("/tmp/kag8kie5uDie3lei0toh-back1.sock");
+  static final Path PAY_SOCKET = Path.of("/tmp/kag8kie5uDie3lei0toh-pay.sock");
 
   static final byte OP_PURGE = 1;
   static final byte OP_PAYMENTS = 2;
   static final byte OP_SUMMARY = 3;
   static final byte OP_UNKNOWN = 4;
 
-  static final int PURGE_200 = 0xBABA;
+  static final int TRX_200 = 0xBABA;
 
   static final byte[] RESP_200 = asciiBytes("""
   HTTP/1.1 200 OK\r

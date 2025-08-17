@@ -32,12 +32,7 @@ import java.nio.file.Path;
 import java.time.Instant;
 import java.util.Deque;
 import java.util.concurrent.Callable;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.StructuredTaskScope;
-import java.util.concurrent.StructuredTaskScope.Subtask;
 import java.util.concurrent.ThreadFactory;
-import java.util.concurrent.locks.Lock;
-import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
 
 /// The Load Balancer.
@@ -49,15 +44,19 @@ public final class Front extends Shared {
   /// Testing Adapter
   static class Adapter {
 
-    SocketAddress back(Path socket) {
-      final SocketAddress back;
-      back = UnixDomainSocketAddress.of(socket);
+    ServerSocketChannel serverSocketChannel() throws IOException {
+      return ServerSocketChannel.open();
+    }
+
+    SocketAddress socketAddress(Path socket) {
+      final SocketAddress addr;
+      addr = UnixDomainSocketAddress.of(socket);
 
       try {
         try (SocketChannel ch = socketChannel()) {
-          ch.connect(back);
+          ch.connect(addr);
 
-          logf("Connect ok=%s%n", back);
+          logf("Connect ok=%s%n", addr);
         }
       } catch (IOException e) {
         log("Failed to init back sockets", e);
@@ -65,15 +64,7 @@ public final class Front extends Shared {
         throw new UncheckedIOException(e);
       }
 
-      return back;
-    }
-
-    long currentTimeMillis() {
-      return System.currentTimeMillis();
-    }
-
-    ServerSocketChannel serverSocketChannel() throws IOException {
-      return ServerSocketChannel.open();
+      return addr;
     }
 
     SocketChannel socketChannel() throws IOException {
@@ -113,7 +104,7 @@ public final class Front extends Shared {
 
   private final ServerSocketChannel channel;
 
-  private final Lock lock = new ReentrantLock();
+  private final SocketAddress pay;
 
   private final ThreadFactory taskFactory;
 
@@ -122,11 +113,13 @@ public final class Front extends Shared {
       SocketAddress back0,
       SocketAddress back1,
       ServerSocketChannel channel,
+      SocketAddress pay,
       ThreadFactory taskFactory) {
     this.adapter = adapter;
     this.back0 = back0;
     this.back1 = back1;
     this.channel = channel;
+    this.pay = pay;
     this.taskFactory = taskFactory;
   }
 
@@ -177,14 +170,17 @@ public final class Front extends Shared {
     shutdownHook.accept(channel);
 
     //
-    // back sockets
+    // socket addresses
     //
 
     final SocketAddress back0;
-    back0 = adapter.back(BACK0_SOCKET);
+    back0 = adapter.socketAddress(BACK0_SOCKET);
 
     final SocketAddress back1;
-    back1 = adapter.back(BACK1_SOCKET);
+    back1 = adapter.socketAddress(BACK1_SOCKET);
+
+    final SocketAddress pay;
+    pay = adapter.socketAddress(PAY_SOCKET);
 
     //
     // task factory
@@ -193,7 +189,7 @@ public final class Front extends Shared {
     final ThreadFactory taskFactory;
     taskFactory = Thread.ofVirtual().name("task-", 1).factory();
 
-    return new Front(adapter, back0, back1, channel, taskFactory);
+    return new Front(adapter, back0, back1, channel, pay, taskFactory);
   }
 
   // ##################################################################
@@ -237,11 +233,8 @@ public final class Front extends Shared {
 
     final ByteBuffer buffer;
 
-    lock.lock();
-    try {
+    synchronized (bufferPool) {
       buffer = bufferPool.removeFirst();
-    } finally {
-      lock.unlock();
     }
 
     buffer.clear();
@@ -271,32 +264,17 @@ public final class Front extends Shared {
 
     @Override
     public final void run() {
-      try {
-        task(this);
+      try (client) {
+        taskRoute(buffer, client);
       } catch (Throwable e) {
         throw new TaskException(buffer, e);
-      }
-    }
-
-  }
-
-  private void task(Task task) throws Exception {
-    final ByteBuffer buffer;
-    buffer = task.buffer;
-
-    final SocketChannel client;
-    client = task.client;
-
-    try (client) {
-      taskRoute(buffer, client);
-    } finally {
-      lock.lock();
-      try {
-        bufferPool.addLast(buffer);
       } finally {
-        lock.unlock();
+        synchronized (bufferPool) {
+          bufferPool.addLast(buffer);
+        }
       }
     }
+
   }
 
   private SocketAddress taskBackAddress() {
@@ -408,43 +386,31 @@ public final class Front extends Shared {
       final int trx;
       trx = slice.getInt();
 
-      return trx == PURGE_200;
+      return trx == TRX_200;
     }
   }
 
-  private void taskPurge(ByteBuffer buffer) throws ExecutionException, InterruptedException {
-    final PurgeTask purge0;
-    purge0 = new PurgeTask(back0, buffer.slice(0, 4));
-
-    final PurgeTask purge1;
-    purge1 = new PurgeTask(back1, buffer.slice(4, 4));
-
-    boolean success = false;
-
-    try (var scope = new StructuredTaskScope.ShutdownOnFailure("purge", taskFactory)) {
-      final Subtask<Boolean> task0;
-      task0 = scope.fork(purge0);
-
-      final Subtask<Boolean> task1;
-      task1 = scope.fork(purge1);
-
-      scope.join();
-
-      scope.throwIfFailed();
-
-      final boolean res0;
-      res0 = task0.get();
-
-      final boolean res1;
-      res1 = task1.get();
-
-      success = res0 && res1;
-    }
-
+  private void taskPurge(ByteBuffer buffer) throws IOException {
+    // assemble the request
     buffer.clear();
 
-    buffer.put(success ? RESP_200 : RESP_500);
+    buffer.put(OP_PURGE);
 
+    buffer.flip();
+
+    try (SocketChannel remote = adapter.socketChannel()) {
+      // send the request
+      remote.connect(pay);
+
+      remote.write(buffer);
+
+      // read the response
+      buffer.clear();
+
+      remote.read(buffer);
+    }
+
+    // send response as it is
     buffer.flip();
   }
 
@@ -471,8 +437,6 @@ public final class Front extends Shared {
     int bufferIndex;
     bufferIndex = 131;
 
-    bufferIndex -= 8; // time
-
     bufferIndex -= 1; // opcode
 
     buffer.position(bufferIndex);
@@ -481,8 +445,6 @@ public final class Front extends Shared {
 
     buffer.put(OP_PAYMENTS);
 
-    buffer.putLong(adapter.currentTimeMillis());
-
     buffer.reset();
 
     // choose backend
@@ -490,19 +452,12 @@ public final class Front extends Shared {
     backAddress = taskBackAddress();
 
     try (SocketChannel back = adapter.socketChannel()) {
-      // send the request
       back.connect(backAddress);
 
-      while (buffer.hasRemaining()) {
-        back.write(buffer);
-      }
+      back.write(buffer);
 
-      // read the response
       buffer.clear();
 
-      // be optimistic:
-      // let's assume the WHOLE request
-      // will be read in a single read operation
       back.read(buffer);
     }
 
@@ -519,82 +474,14 @@ public final class Front extends Shared {
   // ##################################################################
 
   private record Summary(int req0, int amount0, int req1, int amount1) {
-    static final Summary ERROR = new Summary(0, 0, 0, 0);
-
-    final Summary add(Summary s) {
-      return new Summary(
-          req0 + s.req0,
-          amount0 + s.amount0,
-          req1 + s.req1,
-          amount1 + s.amount1
-      );
-    }
-
     final String json() {
       return """
-        {"default":{"totalRequests":%d,"totalAmount":%f},"fallback":{"totalRequests":%d,"totalAmount":%f}}"""
+        {"default":{"totalRequests":%d,"totalAmount":%.2f},"fallback":{"totalRequests":%d,"totalAmount":%.2f}}"""
           .formatted(req0, amount0 / 100d, req1, amount1 / 100d);
     }
   }
 
-  private class SummaryTask implements Callable<Summary> {
-
-    private final SocketAddress backAddress;
-
-    private final ByteBuffer buffer;
-
-    private final long time0;
-
-    private final long time1;
-
-    SummaryTask(SocketAddress backAddress, ByteBuffer buffer, long time0, long time1) {
-      this.backAddress = backAddress;
-
-      this.buffer = buffer;
-
-      this.time0 = time0;
-
-      this.time1 = time1;
-    }
-
-    @Override
-    public final Summary call() throws Exception {
-      // assemble request
-      buffer.put(OP_SUMMARY);
-
-      buffer.putLong(time0);
-
-      buffer.putLong(time1);
-
-      buffer.flip();
-
-      try (SocketChannel back = adapter.socketChannel()) {
-        back.connect(backAddress);
-
-        // send request
-        while (buffer.hasRemaining()) {
-          back.write(buffer);
-        }
-
-        buffer.clear();
-
-        // read response
-        back.read(buffer);
-      }
-
-      buffer.flip();
-
-      return new Summary(
-          buffer.getInt(),
-          buffer.getInt(),
-          buffer.getInt(),
-          buffer.getInt()
-      );
-    }
-
-  }
-
-  private void taskSummary(ByteBuffer buffer) throws ExecutionException, InterruptedException {
+  private void taskSummary(ByteBuffer buffer) throws IOException {
     // find '='
     int off;
     off = 0;
@@ -635,45 +522,36 @@ public final class Front extends Shared {
       time1 = Long.MAX_VALUE;
     }
 
+    // assemble request
     buffer.clear();
 
-    final int half;
-    half = buffer.capacity() / 2;
+    buffer.put(OP_SUMMARY);
 
-    final ByteBuffer buffer0;
-    buffer0 = buffer.slice(0, half);
+    buffer.putLong(time0);
 
-    final ByteBuffer buffer1;
-    buffer1 = buffer.slice(half, half);
+    buffer.putLong(time1);
 
-    final SummaryTask summary0;
-    summary0 = new SummaryTask(back0, buffer0, time0, time1);
+    buffer.flip();
 
-    final SummaryTask summary1;
-    summary1 = new SummaryTask(back1, buffer1, time0, time1);
+    try (SocketChannel remote = adapter.socketChannel()) {
+      remote.connect(pay);
 
-    Summary result;
-    result = Summary.ERROR;
+      remote.write(buffer);
 
-    try (var scope = new StructuredTaskScope.ShutdownOnFailure("summary", taskFactory)) {
-      final Subtask<Summary> task0;
-      task0 = scope.fork(summary0);
+      buffer.clear();
 
-      final Subtask<Summary> task1;
-      task1 = scope.fork(summary1);
-
-      scope.join();
-
-      scope.throwIfFailed();
-
-      final Summary res0;
-      res0 = task0.get();
-
-      final Summary res1;
-      res1 = task1.get();
-
-      result = res0.add(res1);
+      remote.read(buffer);
     }
+
+    buffer.flip();
+
+    final Summary result;
+    result = new Summary(
+        buffer.getInt(),
+        buffer.getInt(),
+        buffer.getInt(),
+        buffer.getInt()
+    );
 
     final String json;
     json = result.json();

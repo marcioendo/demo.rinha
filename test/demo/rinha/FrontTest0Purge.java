@@ -37,18 +37,11 @@ public class FrontTest0Purge {
       """);
     });
 
-    final SocketChannel back0;
-    back0 = Y.socketChannel(opts -> {
+    final SocketChannel pay;
+    pay = Y.socketChannel(opts -> {
       opts.connect(true);
 
-      opts.readData(Shared.PURGE_200);
-    });
-
-    final SocketChannel back1;
-    back1 = Y.socketChannel(opts -> {
-      opts.connect(true);
-
-      opts.readData(Shared.PURGE_200);
+      opts.readData(Shared.RESP_200);
     });
 
     final ServerSocketChannel channel;
@@ -60,8 +53,7 @@ public class FrontTest0Purge {
     adapter = Y.frontAdapter(opts -> {
       opts.serverSocketChannel(channel);
 
-      opts.socketChannel(back0);
-      opts.socketChannel(back1);
+      opts.socketChannel(pay);
     });
 
     final Front front;
@@ -69,8 +61,8 @@ public class FrontTest0Purge {
 
     assertEquals(front._exec(), "Front[backRound=0]");
 
-    assertEquals(Y.socketChannelWrite(back0), Y.frontMsgPurge());
-    assertEquals(Y.socketChannelWrite(back1), Y.frontMsgPurge());
+    assertEquals(Y.socketChannelWrite(pay), Y.frontMsgPurge());
+
     assertEquals(
         Y.socketChannelWriteAscii(client),
         """
@@ -79,8 +71,7 @@ public class FrontTest0Purge {
         """
     );
 
-    assertEquals(back0.isOpen(), false);
-    assertEquals(back1.isOpen(), false);
+    assertEquals(pay.isOpen(), false);
     assertEquals(client.isOpen(), false);
   }
 

@@ -26,9 +26,6 @@ VERSION := 010-SNAPSHOT
 ## JDK 24 required
 JAVA_RELEASE := 24
 
-## Structure Concurrency
-ENABLE_PREVIEW := 1
-
 ## use native by default
 ## use ENABLE_JLINK=1 to override
 ENABLE_NATIVE := 1
@@ -155,6 +152,14 @@ BNATIVE_MAIN := demo.rinha.Back
 
 $(eval $(call native,BNATIVE,back))
 
+#
+# rinha@pay-native
+#
+
+## pay-native main class
+PNATIVE_MAIN := demo.rinha.Pay
+
+$(eval $(call native,PNATIVE,pay))
 
 #
 # rinha link related tasks
@@ -205,11 +210,17 @@ $(eval $(call jlink,FJLINK,front))
 $(eval $(call jlink,BJLINK,back))
 
 #
+# rinha@pay-jlink
+#
+
+$(eval $(call jlink,PJLINK,pay))
+
+#
 # rinha@jlink-clean
 #
 
 .PHONY: jlink-clean
-jlink-clean: front-jlink-clean back-jlink-clean
+jlink-clean: front-jlink-clean back-jlink-clean pay-jlink-clean
 
 #
 # docker related tasks
@@ -346,6 +357,39 @@ endif
 $(eval $(call docker,BDOCKER,back))
 
 #
+# rinha@pay-docker
+#
+
+ifndef ENABLE_JLINK
+## pay-docker req
+PDOCKER_REQ := $(PNATIVE_OUTPUT_FILE)
+
+## pay-docker copy
+PDOCKER_COPY := COPY $(PNATIVE_OUTPUT_FILE) /pay
+
+## pay-docker entrypoint
+PDOCKER_ENTRYPOINT := "/pay"
+else
+## pay-docker req
+PDOCKER_REQ := $(PJLINK_MARKER)
+
+## pay-docker copy
+PDOCKER_COPY := COPY $(PJLINK) pay/
+
+## pay-docker entrypoint
+PDOCKER_ENTRYPOINT := "/pay/bin/java"
+ifeq ($(ENABLE_DEBUG),1)
+PDOCKER_ENTRYPOINT += , "-agentlib:jdwp=transport=dt_socket,server=y,suspend=y,address=*:7000"
+endif
+ifeq ($(ENABLE_PREVIEW),1)
+PDOCKER_ENTRYPOINT += , "--enable-preview"
+endif
+PDOCKER_ENTRYPOINT += , "--module", "$(MODULE)/demo.rinha.Pay"
+endif
+
+$(eval $(call docker,PDOCKER,pay))
+
+#
 # rinha@compose
 #
 
@@ -360,11 +404,10 @@ COMPOSE_UPX += up
 ## compose contents
 define COMPOSE_CONTENTS =
 services:
-  back0:
-    image: $(BDOCKER_TAG)
-    command: ["0"]
-    container_name: back0
-    hostname: back0
+  pay:
+    image: $(PDOCKER_TAG)
+    container_name: pay
+    hostname: pay
     volumes:
       - /tmp:/tmp
     networks:
@@ -373,7 +416,22 @@ services:
       resources:
         limits:
           cpus: "0.6"
-          memory: "125MB"
+          memory: "200MB"
+
+  back0:
+    image: $(BDOCKER_TAG)
+    command: ["0"]
+    container_name: back0
+    hostname: back0
+    volumes:
+      - /tmp:/tmp
+    depends_on:
+      - pay
+    deploy:
+      resources:
+        limits:
+          cpus: "0.3"
+          memory: "50MB"
 
   back1:
     image: $(BDOCKER_TAG)
@@ -382,13 +440,13 @@ services:
     hostname: back1
     volumes:
       - /tmp:/tmp
-    networks:
-      - payment-processor
+    depends_on:
+      - pay
     deploy:
       resources:
         limits:
-          cpus: "0.6"
-          memory: "125MB"
+          cpus: "0.3"
+          memory: "50MB"
 
   front:
     image: $(FDOCKER_TAG)
@@ -407,7 +465,7 @@ services:
       resources:
         limits:
           cpus: "0.3"
-          memory: "100MB"
+          memory: "50MB"
 
 networks:
   backend:
@@ -428,7 +486,7 @@ compose-clean:
 compose-down:
 	docker compose --file $(COMPOSE) down
 
-$(COMPOSE): Makefile $(FDOCKER_MARKER) $(BDOCKER_MARKER)
+$(COMPOSE): Makefile $(FDOCKER_MARKER) $(BDOCKER_MARKER) $(PDOCKER_MARKER)
 	$(file > $(COMPOSE),$(COMPOSE_CONTENTS))
 
 #

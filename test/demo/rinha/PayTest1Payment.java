@@ -21,7 +21,9 @@ import java.nio.channels.ServerSocketChannel;
 import java.nio.channels.SocketChannel;
 import org.testng.annotations.Test;
 
-public class BackTest1Payment {
+public class PayTest1Payment {
+
+  private final long fixedTime = Y.fixedTimeMilis();
 
   @Test
   public void testCase00() {
@@ -35,51 +37,57 @@ public class BackTest1Payment {
 
   @Test(description = "happy path")
   public void testCase01() {
-    final String payload;
-    payload = "{\"correlationId\":\"d1446168-6d53-4910-94f1-77d2acff17db\",\"amount\":19.9}";
-
-    final SocketChannel front;
-    front = Y.socketChannel(opts -> {
+    final SocketChannel back;
+    back = Y.socketChannel(opts -> {
       opts.readData(
-          Y.frontMsgPayment(payload)
+          Y.backMsgPayment("{\"correlationId\":\"d1446168-6d53-4910-94f1-77d2acff17db\",\"amount\":19.9}")
       );
     });
 
-    final SocketChannel pay;
-    pay = Y.socketChannel(_ -> {});
+    final SocketChannel processor;
+    processor = Y.socketChannel(opts -> {
+      opts.readData("""
+      HTTP/1.1 200 OK\r
+      \r
+      """);
+    });
 
     final ServerSocketChannel channel;
     channel = Y.serverSocketChannel(opts -> {
-      opts.socketChannel(front);
+      opts.socketChannel(back);
     });
 
-    final Back.Adapter adapter;
-    adapter = Y.backAdapter(opts -> {
+    final Pay.Adapter adapter;
+    adapter = Y.payAdapter(opts -> {
+      opts.currentTimeMillis(fixedTime);
+
       opts.serverSocketChannel(channel);
 
-      opts.socketChannel(pay);
+      opts.socketChannel(processor);
     });
 
-    final Back back;
-    back = Y.back(adapter);
+    final Pay pay;
+    pay = Y.pay(adapter);
 
-    assertEquals(back._exec(), "Back[]");
+    assertEquals(pay._exec(), "Pay[trxsIndex=1]");
 
-    assertEquals(
-        Y.socketChannelWrite(pay),
-        Y.backMsgPayment(payload)
-    );
+    assertEquals(pay._trxPayment(0), "Trx[amount=1990, proc=0, time=1754824953444]");
 
     assertEquals(
-        Y.socketChannelWriteAscii(front),
+        Y.socketChannelWriteAscii(processor),
         """
-        HTTP/1.1 200 OK\r
+        POST /payments HTTP/1.0\r
+        Content-Type: application/json\r
+        Content-Length: 111\r
         \r
+        {"correlationId":"d1446168-6d53-4910-94f1-77d2acff17db","amount":19.9,"requestedAt":"2025-08-10T11:22:33.444Z"}\
         """
     );
 
-    assertEquals(front.isOpen(), false);
-    assertEquals(pay.isOpen(), false);
+    assertEquals(Y.socketChannelWriteAscii(back), "");
+
+    assertEquals(back.isOpen(), false);
+    assertEquals(processor.isOpen(), false);
   }
 
 }

@@ -16,8 +16,7 @@
 package demo.rinha;
 
 import java.io.IOException;
-import java.net.InetAddress;
-import java.net.InetSocketAddress;
+import java.io.UncheckedIOException;
 import java.net.SocketAddress;
 import java.net.StandardProtocolFamily;
 import java.net.UnixDomainSocketAddress;
@@ -26,59 +25,18 @@ import java.nio.channels.ServerSocketChannel;
 import java.nio.channels.SocketChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.time.Instant;
 import java.util.Deque;
 import java.util.concurrent.ThreadFactory;
-import java.util.concurrent.locks.Condition;
-import java.util.concurrent.locks.Lock;
-import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
 
-/// An instance of our server.
+/// The required servers behind the load balancer.
 public final class Back extends Shared {
 
   private static final int BUFFER_SIZE = 192;
   private static final int POOL_SIZE = 3072;
 
-  private static final int MAX_PERMITS = 10;
-  private static final int MAX_TRXS = 8_500;
-
   /// Testing Adapter
   static class Adapter {
-
-    SocketAddress proc0() throws IOException {
-      return addr("payment-processor-default", 8080);
-    }
-
-    SocketAddress proc1() throws IOException {
-      return addr("payment-processor-fallback", 8080);
-    }
-
-    private SocketAddress addr(String name, int port) throws IOException {
-      final InetAddress[] all;
-      all = InetAddress.getAllByName(name);
-
-      for (InetAddress addr : all) {
-        final InetSocketAddress maybe;
-        maybe = new InetSocketAddress(addr, port);
-
-        try (SocketChannel ch = socketChannel()) {
-          ch.connect(maybe);
-
-          logf("Connect ok=%s%n", maybe);
-
-          return maybe;
-        } catch (IOException e) {
-          logf("Connect failed=%s%n", maybe);
-
-          e.printStackTrace(System.out);
-
-          continue;
-        }
-      }
-
-      throw new IOException("Failed to find IP address of " + name);
-    }
 
     ServerSocketChannel serverSocketChannel(Path path) throws IOException {
       final ServerSocketChannel channel;
@@ -94,8 +52,27 @@ public final class Back extends Shared {
       return channel;
     }
 
+    SocketAddress socketAddress(Path socket) {
+      final SocketAddress addr;
+      addr = UnixDomainSocketAddress.of(socket);
+
+      try {
+        try (SocketChannel ch = socketChannel()) {
+          ch.connect(addr);
+
+          logf("Connect ok=%s%n", addr);
+        }
+      } catch (IOException e) {
+        log("Failed to init back sockets", e);
+
+        throw new UncheckedIOException(e);
+      }
+
+      return addr;
+    }
+
     SocketChannel socketChannel() throws IOException {
-      return SocketChannel.open();
+      return SocketChannel.open(StandardProtocolFamily.UNIX);
     }
 
     void shutdownHook(Path path) {
@@ -116,40 +93,20 @@ public final class Back extends Shared {
 
   private final ServerSocketChannel channel;
 
-  private final Lock lock = new ReentrantLock();
-
-  private final SocketAddress proc0;
-
-  @SuppressWarnings("unused")
-  private final SocketAddress proc1;
-
-  private int procAcquired;
-
-  private final Condition procReady = lock.newCondition();
-
-  private final Condition procReleased = lock.newCondition();
+  private final SocketAddress pay;
 
   private final ThreadFactory taskFactory;
-
-  private final Trx[] trxs = new Trx[MAX_TRXS];
-
-  private int trxsIndex;
-
-  private int waiting;
 
   private Back(
       Adapter adapter,
       ServerSocketChannel channel,
-      SocketAddress proc0,
-      SocketAddress proc1,
+      SocketAddress pay,
       ThreadFactory taskFactory) {
     this.adapter = adapter;
 
     this.channel = channel;
 
-    this.proc0 = proc0;
-
-    this.proc1 = proc1;
+    this.pay = pay;
 
     this.taskFactory = taskFactory;
   }
@@ -227,20 +184,11 @@ public final class Back extends Shared {
     shutdownHook.accept(channel);
 
     //
-    // Payment processors
+    // Pay address
     //
 
-    final SocketAddress proc0, proc1;
-
-    try {
-      proc0 = adapter.proc0();
-
-      proc1 = adapter.proc1();
-    } catch (IOException e) {
-      log("Failed to init payment processor addresses", e);
-
-      return null;
-    }
+    final SocketAddress pay;
+    pay = adapter.socketAddress(PAY_SOCKET);
 
     //
     // Task Factory
@@ -253,7 +201,7 @@ public final class Back extends Shared {
     // Back
     //
 
-    return new Back(adapter, channel, proc0, proc1, taskFactory);
+    return new Back(adapter, channel, pay, taskFactory);
   }
 
   // ##################################################################
@@ -297,11 +245,8 @@ public final class Back extends Shared {
 
     final ByteBuffer buffer;
 
-    lock.lock();
-    try {
+    synchronized (bufferPool) {
       buffer = bufferPool.removeFirst();
-    } finally {
-      lock.unlock();
     }
 
     buffer.clear();
@@ -332,514 +277,82 @@ public final class Back extends Shared {
     @Override
     public final void run() {
       try {
-        task(this);
+        taskRoute(buffer, front);
       } catch (Exception e) {
         throw new TaskException(buffer, e);
-      }
-    }
-
-  }
-
-  private void task(Task task) throws Exception {
-    final ByteBuffer buffer;
-    buffer = task.buffer;
-
-    final SocketChannel front;
-    front = task.front;
-
-    try {
-      task(buffer, front);
-    } finally {
-      lock.lock();
-      try {
-        bufferPool.addLast(buffer);
       } finally {
-        lock.unlock();
+        synchronized (bufferPool) {
+          bufferPool.addLast(buffer);
+        }
       }
     }
-  }
 
-  private void task(ByteBuffer buffer, SocketChannel front) throws Exception {
-    final int limit;
-
-    try (front) {
-      limit = taskRoute(buffer, front);
-    }
-
-    if (limit > 0) {
-      // reset buffer
-      buffer.position(1); // skip op
-
-      buffer.limit(limit);
-
-      // process payment
-      taskPaymentProcess(buffer);
-    }
   }
 
   // ##################################################################
   // # BEGIN: Task: Route
   // ##################################################################
 
-  private int taskRoute(ByteBuffer buffer, SocketChannel front) throws IOException {
-    // read the request
-    final int frontRead;
-    frontRead = front.read(buffer);
+  private void taskRoute(ByteBuffer buffer, SocketChannel front) throws Exception {
+    final boolean payment;
 
-    if (frontRead <= 0) {
-      // be optimistic:
-      // let's assume the WHOLE request
-      // will be read in a single read operation
-      return -1;
-    }
+    final int limit;
 
-    buffer.flip();
+    try (front) {
+      final int read;
+      read = front.read(buffer);
 
-    // helper return signal
-    int signal;
-    signal = 0;
+      if (read <= 0) {
+        return;
+      }
 
-    // task dispatch
-    final byte op;
-    op = buffer.get();
+      buffer.flip();
 
-    switch (op) {
-      case OP_PURGE -> taskPurge(buffer);
+      limit = buffer.limit();
 
-      case OP_PAYMENTS -> signal = taskPayment(buffer);
+      final byte op;
+      op = buffer.get();
 
-      case OP_SUMMARY -> taskSummary(buffer);
+      if (op == OP_PAYMENTS) {
+        payment = true;
 
-      default -> {
+        final byte[] resp;
+        resp = RESP_200;
+
+        buffer.position(limit);
+
+        buffer.limit(limit + resp.length);
+
+        buffer.put(limit, resp);
+      } else {
+        payment = false;
+
         buffer.clear();
 
         buffer.put(RESP_404);
 
         buffer.flip();
       }
-    }
 
-    // write response
-    while (buffer.hasRemaining()) {
       front.write(buffer);
     }
 
-    return signal;
-  }
+    if (payment) {
+      // forward request
+      buffer.position(0);
 
-  // ##################################################################
-  // # END: Task: Route
-  // ##################################################################
+      buffer.limit(limit);
 
-  // ##################################################################
-  // # BEGIN: Task: Purge
-  // ##################################################################
+      try (SocketChannel remote = adapter.socketChannel()) {
+        remote.connect(pay);
 
-  private void taskPurge(ByteBuffer buffer) {
-    trxsIndex = 0;
-
-    buffer.clear();
-
-    buffer.putInt(PURGE_200);
-
-    buffer.flip();
-  }
-
-  // ##################################################################
-  // # END: Task: Purge
-  // ##################################################################
-
-  // ##################################################################
-  // # BEGIN: Task: Payment
-  // ##################################################################
-
-  private int taskPayment(ByteBuffer buffer) {
-    final int limit;
-    limit = buffer.limit();
-
-    final byte[] resp;
-    resp = RESP_200;
-
-    buffer.position(limit);
-
-    buffer.limit(limit + resp.length);
-
-    buffer.put(limit, resp);
-
-    return limit;
-  }
-
-  // we'll use HTTP/1.0 so we can skip the Host header...
-  private static final byte[] PAYMENT_REQ = asciiBytes("""
-    POST /payments HTTP/1.0\r
-    Content-Type: application/json\r
-    Content-Length: \
-    """);
-
-  private static final long PAYMENT_RESP = asciiLong("HTTP/1.1");
-  private static final long PAYMENT_RESP_200 = asciiLong(" 200 OK\r");
-  private static final long PAYMENT_RESP_400 = asciiLong(" 400 Bad");
-  private static final long PAYMENT_RESP_500 = asciiLong(" 500 Int");
-
-  private void taskPaymentProcess(ByteBuffer buffer) throws Exception {
-    final long time;
-    time = buffer.getLong();
-
-    final byte[] json;
-    json = taskPaymentJson(buffer, time);
-
-    final int amount;
-    amount = buffer.getInt();
-
-    while (true) {
-      //
-      // assemble request
-      //
-
-      buffer.clear();
-
-      buffer.put(PAYMENT_REQ);
-
-      // write content-length value
-      int value;
-      value = json.length;
-
-      int divisor;
-      divisor = 1;
-
-      while (value >= 10) {
-        value /= 10;
-
-        divisor *= 10;
-      }
-
-      value = json.length;
-
-      while (divisor >= 1) {
-        final int digit;
-        digit = value / divisor;
-
-        final int c;
-        c = '0' + digit;
-
-        buffer.put((byte) c);
-
-        value %= divisor;
-
-        divisor /= 10;
-      }
-
-      buffer.put(CRLFCRLF);
-
-      buffer.put(json);
-
-      buffer.flip();
-
-      // always use the default processor
-      final SocketAddress procAddres;
-      procAddres = proc0;
-
-      // before talking to the processor, obtain a permit
-      // this is required to prevent ddosing the payment processor
-      permitAcquire();
-
-      try (SocketChannel processor = adapter.socketChannel()) {
-        processor.connect(procAddres);
-
-        while (buffer.hasRemaining()) {
-          processor.write(buffer);
-        }
-
-        // read response
-        buffer.clear();
-
-        // be optimistic:
-        // let's assume the WHOLE request
-        // will be read in a single read operation
-        processor.read(buffer);
-      } finally {
-        // we've done talking to the processor, release the permit
-        permitRelease();
-      }
-
-      // process the response
-      buffer.flip();
-
-      final long long0;
-      long0 = buffer.getLong();
-
-      if (long0 != PAYMENT_RESP) {
-        throw new TaskException(buffer, "Unexpected payment processor response");
-      }
-
-      final long long1;
-      long1 = buffer.getLong();
-
-      if (long1 == PAYMENT_RESP_200) {
-        paymentOk(time, amount);
-
-        // our work is done
-        return;
-      }
-
-      else if (long1 == PAYMENT_RESP_400 || long1 == PAYMENT_RESP_500) {
-        paymentRetry();
-      }
-
-      else {
-        throw new TaskException(buffer, "Unexpected payment processor response");
+        remote.write(buffer);
       }
     }
   }
-
-  private static final int PAYMENT_REQ_TRAILER_LEN = "\"requestedAt\":\"2025-07-15T12:34:56.000Z\"}".length();
-  private static final byte[] REQUESTED_AT = asciiBytes(",\"requestedAt\":\"");
-  private static final byte[] CRLFCRLF = asciiBytes("\r\n\r\n");
-
-  private byte[] taskPaymentJson(ByteBuffer buffer, long time) {
-    final int reqJsonLen;
-    reqJsonLen = buffer.remaining();
-
-    final byte[] json;
-    json = new byte[reqJsonLen + PAYMENT_REQ_TRAILER_LEN];
-
-    // json: copy from original request
-    int jsonIdx;
-    jsonIdx = buffer.remaining();
-
-    buffer.get(json, 0, jsonIdx);
-
-    // json: remove trailing '}'
-    jsonIdx -= 1;
-
-    // json: parse amount
-    final int amount;
-    amount = parseAmount(json, jsonIdx);
-
-    // store amount at the buffer
-    buffer.clear();
-
-    buffer.putInt(amount);
-
-    buffer.flip();
-
-    // json: requestedAt prop
-    System.arraycopy(REQUESTED_AT, 0, json, jsonIdx, REQUESTED_AT.length);
-
-    jsonIdx += REQUESTED_AT.length;
-
-    // json: requestedAt value
-    final Instant instant;
-    instant = Instant.ofEpochMilli(time);
-
-    final String iso;
-    iso = instant.toString();
-
-    for (int idx = 0, len = iso.length(); idx < len; idx++) {
-      final char c;
-      c = iso.charAt(idx);
-
-      // iso date has only us-ascii characters
-      json[jsonIdx++] = (byte) c;
-    }
-
-    // json: trailer
-    json[jsonIdx++] = '\"';
-    json[jsonIdx++] = '}';
-
-    return json;
-  }
-
-  private int parseAmount(byte[] json, int jsonIdx) {
-    int amount;
-    amount = 0;
-
-    int dot;
-    dot = jsonIdx;
-
-    int idx;
-    idx = jsonIdx - 1;
-
-    byte b;
-    b = 0;
-
-    int mul;
-    mul = 1;
-
-    while (idx >= 0) {
-      b = json[idx--];
-
-      if (b == ':') {
-        break;
-      }
-
-      if (b == '.') {
-        dot = idx + 1;
-
-        continue;
-      }
-
-      if (b < '0' || b > '9') {
-        logf("amount parse error: expected digit but got %x%n", b);
-
-        return amount;
-      }
-
-      final int digit;
-      digit = b - '0';
-
-      final int val;
-      val = digit * mul;
-
-      amount += val;
-
-      mul *= 10;
-    }
-
-    final int decimals;
-    decimals = jsonIdx - dot - 1;
-
-    switch (decimals) {
-      case 0 -> amount *= 100;
-      case 1 -> amount *= 10;
-      case 2 -> {}
-      default -> logf("amount parse error: more than 2 decimals %d%n", decimals);
-    }
-
-    return amount;
-  }
-
-  private void permitAcquire() {
-    lock.lock();
-    try {
-      while (procAcquired == MAX_PERMITS) {
-        procReleased.awaitUninterruptibly();
-      }
-
-      procAcquired += 1;
-    } finally {
-      lock.unlock();
-    }
-  }
-
-  private void permitRelease() {
-    lock.lock();
-    try {
-      procAcquired -= 1;
-
-      procReleased.signal();
-    } finally {
-      lock.unlock();
-    }
-  }
-
-  private void paymentOk(long time, int amount) {
-    final Trx trx;
-    trx = new Trx(time, 0, amount);
-
-    lock.lock();
-    try {
-      final int idx;
-      idx = trxsIndex++;
-
-      trxs[idx] = trx;
-
-      if (waiting > 0) {
-        procReady.signalAll();
-      }
-    } finally {
-      lock.unlock();
-    }
-  }
-
-  private void paymentRetry() {
-    lock.lock();
-    try {
-      waiting += 1;
-
-      procReady.awaitUninterruptibly();
-
-      waiting -= 1;
-    } finally {
-      lock.unlock();
-    }
-  }
-
-  // ##################################################################
-  // # END: Task: Payment
-  // ##################################################################
-
-  // ##################################################################
-  // # BEGIN: Task: Summary
-  // ##################################################################
-
-  private void taskSummary(ByteBuffer buffer) {
-    int req0 = 0, req1 = 0, amount0 = 0, amount1 = 0;
-
-    final long time0;
-    time0 = buffer.getLong();
-
-    final long time1;
-    time1 = buffer.getLong();
-
-    lock.lock();
-    try {
-      for (int idx = 0, max = trxs.length; idx < max; idx++) {
-        final Trx trx;
-        trx = trxs[idx];
-
-        if (trx == null) {
-          continue;
-        }
-
-        if (trx.time < time0 || trx.time > time1) {
-          continue;
-        }
-
-        if (trx.proc == 0) {
-          req0 += 1;
-
-          amount0 += trx.amount;
-        } else {
-          req1 += 1;
-
-          amount1 += trx.amount;
-        }
-      }
-    } finally {
-      lock.unlock();
-    }
-
-    buffer.clear();
-
-    buffer.putInt(req0);
-
-    buffer.putInt(amount0);
-
-    buffer.putInt(req1);
-
-    buffer.putInt(amount1);
-
-    buffer.flip();
-
-  }
-
-  // ##################################################################
-  // # END: Task: Summary
-  // ##################################################################
 
   // ##################################################################
   // # END: Task
-  // ##################################################################
-
-  // ##################################################################
-  // # BEGIN: Trx
-  // ##################################################################
-
-  private record Trx(long time, int proc, int amount) {}
-
-  // ##################################################################
-  // # BEGIN: Trx
   // ##################################################################
 
   // ##################################################################
@@ -847,7 +360,7 @@ public final class Back extends Shared {
   // ##################################################################
 
   final String _debug() {
-    return "Back[trxsIndex=%d]".formatted(trxsIndex);
+    return "Back[]";
   }
 
   final String _exec() {
@@ -857,25 +370,6 @@ public final class Back extends Shared {
     task.run();
 
     return _debug();
-  }
-
-  final String _payment() {
-    final Runnable task;
-    task = serverListen();
-
-    final int before;
-    before = trxsIndex;
-
-    task.run();
-
-    final Trx trx;
-    trx = trxs[before];
-
-    return trx.toString();
-  }
-
-  void _trx(long time, int proc, int amount) {
-    trxs[trxsIndex++] = new Trx(time, proc, amount);
   }
 
   // ##################################################################

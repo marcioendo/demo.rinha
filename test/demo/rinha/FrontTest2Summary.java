@@ -46,14 +46,9 @@ public class FrontTest2Summary {
       """);
     });
 
-    final SocketChannel back0;
-    back0 = Y.socketChannel(opts -> {
+    final SocketChannel pay;
+    pay = Y.socketChannel(opts -> {
       opts.readData(Y.backMsgSummary(3, 4321, 6, 5432));
-    });
-
-    final SocketChannel back1;
-    back1 = Y.socketChannel(opts -> {
-      opts.readData(Y.backMsgSummary(2, 7654, 4, 9876));
     });
 
     final ServerSocketChannel channel;
@@ -65,8 +60,7 @@ public class FrontTest2Summary {
     adapter = Y.frontAdapter(opts -> {
       opts.serverSocketChannel(channel);
 
-      opts.socketChannel(back0);
-      opts.socketChannel(back1);
+      opts.socketChannel(pay);
     });
 
     final Front front;
@@ -75,12 +69,7 @@ public class FrontTest2Summary {
     assertEquals(front._exec(), "Front[backRound=0]");
 
     assertEquals(
-        Y.socketChannelWrite(back0),
-        Y.frontMsgSummary(time0, time1)
-    );
-
-    assertEquals(
-        Y.socketChannelWrite(back1),
+        Y.socketChannelWrite(pay),
         Y.frontMsgSummary(time0, time1)
     );
 
@@ -89,14 +78,13 @@ public class FrontTest2Summary {
         """
         HTTP/1.1 200 OK\r
         Content-Type: application/json\r
-        Content-Length: 113\r
+        Content-Length: 102\r
         \r
-        {"default":{"totalRequests":5,"totalAmount":119.750000},"fallback":{"totalRequests":10,"totalAmount":153.080000}}\
+        {"default":{"totalRequests":3,"totalAmount":43.21},"fallback":{"totalRequests":6,"totalAmount":54.32}}\
         """
     );
 
-    assertEquals(back0.isOpen(), false);
-    assertEquals(back1.isOpen(), false);
+    assertEquals(pay.isOpen(), false);
     assertEquals(client.isOpen(), false);
   }
 
@@ -113,13 +101,8 @@ public class FrontTest2Summary {
       """);
     });
 
-    final SocketChannel back0;
-    back0 = Y.socketChannel(opts -> {
-      opts.readData(Y.backMsgSummary(0, 0, 0, 0));
-    });
-
-    final SocketChannel back1;
-    back1 = Y.socketChannel(opts -> {
+    final SocketChannel pay;
+    pay = Y.socketChannel(opts -> {
       opts.readData(Y.backMsgSummary(0, 0, 0, 0));
     });
 
@@ -132,8 +115,7 @@ public class FrontTest2Summary {
     adapter = Y.frontAdapter(opts -> {
       opts.serverSocketChannel(channel);
 
-      opts.socketChannel(back0);
-      opts.socketChannel(back1);
+      opts.socketChannel(pay);
     });
 
     final Front front;
@@ -142,12 +124,7 @@ public class FrontTest2Summary {
     assertEquals(front._exec(), "Front[backRound=0]");
 
     assertEquals(
-        Y.socketChannelWrite(back0),
-        Y.frontMsgSummary(0L, Long.MAX_VALUE)
-    );
-
-    assertEquals(
-        Y.socketChannelWrite(back1),
+        Y.socketChannelWrite(pay),
         Y.frontMsgSummary(0L, Long.MAX_VALUE)
     );
 
@@ -156,14 +133,13 @@ public class FrontTest2Summary {
         """
         HTTP/1.1 200 OK\r
         Content-Type: application/json\r
-        Content-Length: 108\r
+        Content-Length: 100\r
         \r
-        {"default":{"totalRequests":0,"totalAmount":0.000000},"fallback":{"totalRequests":0,"totalAmount":0.000000}}\
+        {"default":{"totalRequests":0,"totalAmount":0.00},"fallback":{"totalRequests":0,"totalAmount":0.00}}\
         """
     );
 
-    assertEquals(back0.isOpen(), false);
-    assertEquals(back1.isOpen(), false);
+    assertEquals(pay.isOpen(), false);
     assertEquals(client.isOpen(), false);
   }
 

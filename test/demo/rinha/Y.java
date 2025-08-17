@@ -63,6 +63,24 @@ final class Y {
     return Back.boot(adapter, args);
   }
 
+  public static byte[] backMsgPayment(String strval) {
+    final ByteBuffer buffer;
+    buffer = ByteBuffer.allocate(512);
+
+    buffer.put(Shared.OP_PAYMENTS);
+
+    buffer.put(strval.getBytes(StandardCharsets.US_ASCII));
+
+    buffer.flip();
+
+    final byte[] bytes;
+    bytes = new byte[buffer.remaining()];
+
+    buffer.get(bytes);
+
+    return bytes;
+  }
+
   public static byte[] backMsgSummary(int req0, int amount0, int req1, int amount1) {
     final ByteBuffer buffer;
     buffer = ByteBuffer.allocate(16);
@@ -85,10 +103,6 @@ final class Y {
   }
 
   private static final class ThisBackAdapter extends Back.Adapter implements BackAdapterOptions {
-
-    private SocketAddress proc0;
-
-    private SocketAddress proc1;
 
     private ServerSocketChannel serverSocketChannel;
 
@@ -113,18 +127,13 @@ final class Y {
     }
 
     @Override
-    final SocketAddress proc0() throws IOException {
-      return proc0;
-    }
-
-    @Override
-    final SocketAddress proc1() throws IOException {
-      return proc1;
-    }
-
-    @Override
     final ServerSocketChannel serverSocketChannel(Path path) throws IOException {
       return serverSocketChannel;
+    }
+
+    @Override
+    final SocketAddress socketAddress(Path socket) {
+      return UnixDomainSocketAddress.of(socket);
     }
 
     @Override
@@ -181,8 +190,6 @@ final class Y {
 
   sealed interface FrontAdapterOptions {
 
-    void currentTimeMillis(long value);
-
     void serverSocketChannel(ServerSocketChannel value);
 
     void socketChannel(SocketChannel value);
@@ -191,18 +198,11 @@ final class Y {
 
   private static final class ThisFrontAdapter extends Front.Adapter implements FrontAdapterOptions {
 
-    private long currentTimeMillis;
-
     private ServerSocketChannel serverSocketChannel;
 
     private final List<SocketChannel> socketChannels = new ArrayList<>();
 
     private int socketChannelsIndex;
-
-    @Override
-    public final void currentTimeMillis(long value) {
-      currentTimeMillis = value;
-    }
 
     @Override
     public final void serverSocketChannel(ServerSocketChannel value) {
@@ -221,13 +221,8 @@ final class Y {
     }
 
     @Override
-    final SocketAddress back(Path socket) {
+    final SocketAddress socketAddress(Path socket) {
       return UnixDomainSocketAddress.of(socket);
-    }
-
-    @Override
-    final long currentTimeMillis() {
-      return currentTimeMillis;
     }
 
     @Override
@@ -259,13 +254,11 @@ final class Y {
     return builder;
   }
 
-  public static byte[] frontMsgPayment(long time, int strlen, String strval) {
+  public static byte[] frontMsgPayment(String strval) {
     final ByteBuffer buffer;
     buffer = ByteBuffer.allocate(512);
 
     buffer.put(Shared.OP_PAYMENTS);
-
-    buffer.putLong(time);
 
     buffer.put(strval.getBytes(StandardCharsets.US_ASCII));
 
@@ -305,6 +298,125 @@ final class Y {
 
   // ##################################################################
   // # END: Front
+  // ##################################################################
+
+  // ##################################################################
+  // # BEGIN: Pay
+  // ##################################################################
+
+  public static Pay pay(Pay.Adapter adapter) {
+    return pay(adapter, "0");
+  }
+
+  private static Pay pay(Pay.Adapter adapter, String... args) {
+    return Pay.boot(adapter, args);
+  }
+
+  public static byte[] payMsgSummary(int req0, int amount0, int req1, int amount1) {
+    final ByteBuffer buffer;
+    buffer = ByteBuffer.allocate(16);
+
+    buffer.putInt(req0);
+    buffer.putInt(amount0);
+
+    buffer.putInt(req1);
+    buffer.putInt(amount1);
+
+    return buffer.array();
+  }
+
+  sealed interface PayAdapterOptions {
+
+    void currentTimeMillis(long value);
+
+    void serverSocketChannel(ServerSocketChannel value);
+
+    void socketChannel(SocketChannel value);
+
+  }
+
+  private static final class ThisPayAdapter extends Pay.Adapter implements PayAdapterOptions {
+
+    private long currentTimeMillis;
+
+    private SocketAddress proc0;
+
+    private SocketAddress proc1;
+
+    private ServerSocketChannel serverSocketChannel;
+
+    private final List<SocketChannel> socketChannels = new ArrayList<>();
+
+    private int socketChannelsIndex;
+
+    @Override
+    public final void currentTimeMillis(long value) {
+      currentTimeMillis = value;
+    }
+
+    @Override
+    public final void serverSocketChannel(ServerSocketChannel value) {
+      if (serverSocketChannel != null) {
+        throw new IllegalStateException("ServerSocketChannel already defined");
+      }
+
+      serverSocketChannel = Objects.requireNonNull(value, "value == null");
+    }
+
+    @Override
+    public final void socketChannel(SocketChannel value) {
+      socketChannels.add(
+          Objects.requireNonNull(value, "value == null")
+      );
+    }
+
+    @Override
+    final long currentTimeMillis() {
+      return currentTimeMillis;
+    }
+
+    @Override
+    final SocketAddress proc0() throws IOException {
+      return proc0;
+    }
+
+    @Override
+    final SocketAddress proc1() throws IOException {
+      return proc1;
+    }
+
+    @Override
+    final ServerSocketChannel serverSocketChannel(Path path) throws IOException {
+      return serverSocketChannel;
+    }
+
+    @Override
+    final synchronized SocketChannel socketChannel() throws IOException {
+      if (socketChannelsIndex < socketChannels.size()) {
+        return socketChannels.get(socketChannelsIndex++);
+      } else {
+        return null;
+      }
+    }
+
+    @Override
+    final void shutdownHook(Path path) {
+      // noop
+    }
+
+  }
+
+  public static Pay.Adapter payAdapter(Consumer<? super PayAdapterOptions> opts) {
+    final ThisPayAdapter builder;
+    builder = new ThisPayAdapter();
+
+    opts.accept(builder);
+
+    return builder;
+  }
+
+  // ##################################################################
+  // # END: Pay
   // ##################################################################
 
   // ##################################################################

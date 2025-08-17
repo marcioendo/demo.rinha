@@ -23,8 +23,6 @@ import org.testng.annotations.Test;
 
 public class FrontTest1Payment {
 
-  private final long fixedTime = Y.fixedTimeMilis();
-
   @Test
   public void testCase00() {
     assertEquals(
@@ -68,8 +66,6 @@ public class FrontTest1Payment {
 
     final Front.Adapter adapter;
     adapter = Y.frontAdapter(opts -> {
-      opts.currentTimeMillis(fixedTime);
-
       opts.serverSocketChannel(channel);
 
       opts.socketChannel(back0);
@@ -82,7 +78,7 @@ public class FrontTest1Payment {
 
     assertEquals(
         Y.socketChannelWrite(back0),
-        Y.frontMsgPayment(fixedTime, 70, "{\"correlationId\":\"d1446168-6d53-4910-94f1-77d2acff17db\",\"amount\":19.9}")
+        Y.frontMsgPayment("{\"correlationId\":\"d1446168-6d53-4910-94f1-77d2acff17db\",\"amount\":19.9}")
     );
 
     assertEquals(
