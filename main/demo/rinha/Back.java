@@ -16,7 +16,6 @@
 package demo.rinha;
 
 import java.io.IOException;
-import java.net.Inet4Address;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.SocketAddress;
@@ -56,20 +55,10 @@ public final class Back extends Shared {
     }
 
     private SocketAddress addr(String name, int port) throws IOException {
-      final InetAddress[] all;
-      all = InetAddress.getAllByName(name);
+      final InetAddress address;
+      address = InetAddress.getByName(name);
 
-      for (InetAddress addr : all) {
-        if (addr.isLoopbackAddress()) {
-          continue;
-        }
-
-        if (addr instanceof Inet4Address) {
-          return new InetSocketAddress(addr, port);
-        }
-      }
-
-      throw new IOException("Failed to find IPv4 address of " + name);
+      return new InetSocketAddress(address, port);
     }
 
     ServerSocketChannel serverSocketChannel(Path path) throws IOException {
