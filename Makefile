@@ -26,6 +26,9 @@ VERSION := 012-SNAPSHOT
 ## JDK 24 required
 JAVA_RELEASE := 24
 
+## use jlink
+ENABLE_JLINK := 1
+
 ## Test dependencies
 SLF4J_NOP := org.slf4j/slf4j-nop/2.0.17
 TESTNG := org.testng/testng/7.11.0
